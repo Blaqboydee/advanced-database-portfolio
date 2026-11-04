@@ -79,14 +79,18 @@ advanced-database-portfolio/
 
 ## AI use declaration
 
-_To be completed by the student before submission._
-
-- **Tool used:** Claude Code (Anthropic), running in VS Code
-- **What it was used for:** _<e.g. explaining the brief, drafting SQL scripts and documentation, suggesting test cases>_
-- **How the output was reviewed and verified:** _<e.g. ran every script against PostgreSQL myself, checked balances by hand, modified X, rejected Y, …>_
+- **Tool used:** Claude Code (Anthropic), an AI coding assistant running in Visual Studio Code. It was used substantially in this portfolio.
+- **What it was used for:** interpreting the brief; proposing the case-study design and experiments; writing the SQL, shell, Python, mongosh and Cypher scripts; running them in Docker to produce the evidence files; and drafting the README files, the LMS write-up and a first draft of the reflection, which I then revised in my own words. I picked the use case and directed it through each section of the project.
+- **How the output was reviewed and verified:** I checked the repository and ER diagram on GitHub, re-ran every portfolio's `run_all.sh` on my own machine and confirmed the automatic checks pass (balance audits, MongoDB-versus-PostgreSQL totals, 0 lost deposits), reproduced the lost update by hand in two terminals ([MANUAL_DEMO.md](portfolio-3-transactions-concurrency/MANUAL_DEMO.md)), and compared my re-run with the figures quoted in the write-up: timings varied slightly (a 1,878× speed-up against the quoted 1,690×), but every pass/fail check matched.
 
 ## References
 
-- PostgreSQL Global Development Group (2024) *PostgreSQL 16 Documentation*. https://www.postgresql.org/docs/16/
+- Abadi, D. (2012) 'Consistency tradeoffs in modern distributed database system design', *IEEE Computer*, 45(2), pp. 37–42. Used for the PACELC analysis in Portfolio 5.
 - Central Bank of Nigeria (2013) *Circular on the Three-Tiered Know Your Customer (KYC) Requirements*. Used as the basis for the `kyc_tier` table. The limit values in this project are illustrative.
 - Elmasri, R. and Navathe, S. B. (2016) *Fundamentals of Database Systems*. 7th edn. Pearson. Used for normalisation (1NF–BCNF).
+- Federal Republic of Nigeria (2023) *Nigeria Data Protection Act 2023*. Used for the data-residency requirement in the cloud design.
+- MongoDB, Inc. *MongoDB 7.0 Manual*. https://www.mongodb.com/docs/v7.0/
+- Neo4j, Inc. *Cypher Manual for Neo4j 5*. https://neo4j.com/docs/cypher-manual/5/
+- Ports, D. R. K. and Grittner, K. (2012) 'Serializable snapshot isolation in PostgreSQL', *Proceedings of the VLDB Endowment*, 5(12), pp. 1850–1861.
+- PostgreSQL Global Development Group (2024) *PostgreSQL 16 Documentation*. https://www.postgresql.org/docs/16/
+- Redis Ltd. *Redis documentation*. https://redis.io/docs/
