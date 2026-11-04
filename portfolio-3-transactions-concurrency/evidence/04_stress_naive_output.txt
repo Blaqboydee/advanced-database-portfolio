@@ -1,0 +1,71 @@
+-- run at 2026-11-04 10:44:34 WAT
+CREATE FUNCTION
+DROP TABLE
+SELECT 1
+ snapshot | total_money_in_16_accounts | deadlocks_so_far 
+----------+----------------------------+------------------
+ baseline |                11356200.00 |                1
+(1 row)
+
+--- pgbench: 16 concurrent clients x 60 transfers = 960 transfers
+pgbench (16.15 (Debian 16.15-1.pgdg13+2))
+transaction type: /portfolio/portfolio-3-transactions-concurrency/stress/pgbench_transfer_naive.sql
+scaling factor: 1
+query mode: simple
+number of clients: 16
+number of threads: 4
+maximum number of tries: 20
+number of transactions per client: 60
+number of transactions actually processed: 960/960
+number of failed transactions: 0 (0.000%)
+number of serialization failures: 0 (0.000%)
+number of deadlock failures: 0 (0.000%)
+number of transactions retried: 67 (6.979%)
+total number of retries: 81
+latency average = 1262.118 ms
+initial connection time = 3.762 ms
+tps = 12.677105 (without initial connection time)
+Transfers posted during the run, by outcome:
+  status   | transfers | total_amount 
+-----------+-----------+--------------
+ COMPLETED |       960 |    997684.00
+(1 row)
+
+Most common failure reasons (business rules enforced under load):
+ failure_reason | transfers 
+----------------+-----------
+(0 rows)
+
+CHECK 1: money conservation (difference must be 0)
+ total_before | total_after | money_created_or_destroyed 
+--------------+-------------+----------------------------
+  11356200.00 | 11449514.00 |                   93314.00
+(1 row)
+
+CHECK 2: stored balance vs transaction history (mismatches must be 0)
+ account_number | stored_balance | balance_from_history | difference 
+----------------+----------------+----------------------+------------
+ 3010000001     |      449198.00 |            455805.00 |   -6607.00
+ 3010000002     |      251690.00 |            234791.00 |   16899.00
+ 3010000003     |      445674.00 |            436729.00 |    8945.00
+ 3010000004     |     2363936.00 |           2342246.00 |   21690.00
+ 3010000005     |      221598.00 |            227492.00 |   -5894.00
+ 3010000006     |       70030.00 |             61000.00 |    9030.00
+ 3010000007     |      663940.00 |            654494.00 |    9446.00
+ 3010000009     |      177076.00 |            176001.00 |    1075.00
+ 3010000010     |      274206.00 |            250124.00 |   24082.00
+ 3010000011     |       54433.00 |             52548.00 |    1885.00
+ 3010000012     |     1188382.00 |           1178460.00 |    9922.00
+ 3010000014     |      133276.00 |            131707.00 |    1569.00
+ 3010000015     |     2762905.00 |           2742314.00 |   20591.00
+ 3010000017     |      161901.00 |            168705.00 |   -6804.00
+ 3010000018     |      755581.00 |            765517.00 |   -9936.00
+ 3010000019     |     1475688.00 |           1478267.00 |   -2579.00
+(16 rows)
+
+CHECK 3: deadlocks detected by PostgreSQL during the run
+ deadlocks_during_run 
+----------------------
+                   81
+(1 row)
+

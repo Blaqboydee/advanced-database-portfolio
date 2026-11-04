@@ -2,7 +2,7 @@
 
 - **Course:** MIT 8103 Advanced Database Systems, MIVA Open University (2026/2027, First Semester CA)
 - **Student:** Adeoluwa Adegoke
-- **Matric No:** _<fill in>_
+- **Matric No:** 301926132
 
 ---
 
@@ -27,8 +27,8 @@ The same case study is used in all five portfolio activities.
 | # | Activity | Folder | Status |
 |---|---|---|---|
 | 1 | Database Design and Modelling | [portfolio-1-database-design/](portfolio-1-database-design/) | ✅ Complete |
-| 2 | Query Processing and Optimisation | [portfolio-2-query-optimisation/](portfolio-2-query-optimisation/) | ⏳ Planned |
-| 3 | Transactions and Concurrency | [portfolio-3-transactions-concurrency/](portfolio-3-transactions-concurrency/) | ⏳ Planned |
+| 2 | Query Processing and Optimisation | [portfolio-2-query-optimisation/](portfolio-2-query-optimisation/) | ✅ Complete |
+| 3 | Transactions and Concurrency | [portfolio-3-transactions-concurrency/](portfolio-3-transactions-concurrency/) | ✅ Complete |
 | 4 | NoSQL and Advanced Data Models | [portfolio-4-nosql/](portfolio-4-nosql/) | ⏳ Planned |
 | 5 | Distributed and Cloud Database | [portfolio-5-distributed-cloud/](portfolio-5-distributed-cloud/) | ⏳ Planned |
 
@@ -43,6 +43,7 @@ Each folder has its own README explaining what was built, how it was tested, and
 | PostgreSQL 16 (Docker image `postgres:16`) | Relational database for Portfolios 1–3 |
 | Docker / Docker Compose | Reproducible local environment ([docker-compose.yml](docker-compose.yml)) |
 | Mermaid | ER diagram, rendered by GitHub |
+| Python 3 (standard library only) | Benchmark runner for Portfolio 2 ([benchmark.py](portfolio-2-query-optimisation/benchmark.py)) |
 | *(planned)* MongoDB, Redis | NoSQL models (Portfolio 4) |
 | *(planned)* PostgreSQL streaming replication / MongoDB replica set | Distributed exercise (Portfolio 5) |
 
@@ -53,6 +54,8 @@ Prerequisite: Docker Desktop.
 ```bash
 docker compose up -d                          # PostgreSQL on localhost:5433 (user owotrust)
 ./portfolio-1-database-design/run_all.sh      # build + seed + test Portfolio 1
+./portfolio-2-query-optimisation/run_all.sh   # 1M-row dataset, plans, indexes, benchmarks (~35 s)
+./portfolio-3-transactions-concurrency/run_all.sh  # ACID demos, anomalies, stress + crash tests (~1.5 min)
 docker exec -it owotrust-pg psql -U owotrust -d owotrust_bank   # interactive SQL shell
 ```
 
@@ -62,8 +65,8 @@ docker exec -it owotrust-pg psql -U owotrust -d owotrust_bank   # interactive SQ
 advanced-database-portfolio/
 ├── docker-compose.yml
 ├── portfolio-1-database-design/      schema, seed data, constraint tests, ER diagram, normalisation
-├── portfolio-2-query-optimisation/
-├── portfolio-3-transactions-concurrency/
+├── portfolio-2-query-optimisation/   bulk data, workload, execution plans, indexes, benchmarks, analysis
+├── portfolio-3-transactions-concurrency/  transfer function, ACID demos, isolation anomalies, stress + crash tests
 ├── portfolio-4-nosql/
 ├── portfolio-5-distributed-cloud/
 └── README.md

@@ -1,0 +1,57 @@
+-- run at 2026-11-04 10:45:50 WAT
+CREATE FUNCTION
+DROP TABLE
+SELECT 1
+ snapshot | total_money_in_16_accounts | deadlocks_so_far 
+----------+----------------------------+------------------
+ baseline |                11356200.00 |               82
+(1 row)
+
+--- pgbench: 16 concurrent clients x 250 transfers = 4000 transfers
+pgbench (16.15 (Debian 16.15-1.pgdg13+2))
+transaction type: /portfolio/portfolio-3-transactions-concurrency/stress/pgbench_transfer_safe.sql
+scaling factor: 1
+query mode: simple
+number of clients: 16
+number of threads: 4
+maximum number of tries: 20
+number of transactions per client: 250
+number of transactions actually processed: 4000/4000
+number of failed transactions: 0 (0.000%)
+number of serialization failures: 0 (0.000%)
+number of deadlock failures: 0 (0.000%)
+number of transactions retried: 0 (0.000%)
+total number of retries: 0
+latency average = 1.987 ms
+initial connection time = 4.063 ms
+tps = 8052.210533 (without initial connection time)
+Transfers posted during the run, by outcome:
+  status   | transfers | total_amount 
+-----------+-----------+--------------
+ COMPLETED |      3298 |   3520894.00
+ FAILED    |       702 |    713969.00
+(2 rows)
+
+Most common failure reasons (business rules enforced under load):
+                   failure_reason                    | transfers 
+-----------------------------------------------------+-----------
+ Daily limit exceeded: limit n already spent today n |       702
+(1 row)
+
+CHECK 1: money conservation (difference must be 0)
+ total_before | total_after | money_created_or_destroyed 
+--------------+-------------+----------------------------
+  11356200.00 | 11356200.00 |                       0.00
+(1 row)
+
+CHECK 2: stored balance vs transaction history (mismatches must be 0)
+ account_number | stored_balance | balance_from_history | difference 
+----------------+----------------+----------------------+------------
+(0 rows)
+
+CHECK 3: deadlocks detected by PostgreSQL during the run
+ deadlocks_during_run 
+----------------------
+                    0
+(1 row)
+

@@ -1,0 +1,21 @@
+-- run at 2026-11-04 10:44:29 WAT
+CREATE INDEX
+psql:/portfolio/portfolio-3-transactions-concurrency/sql/01_transaction_objects.sql:21: NOTICE:  relation "txn_ref_seq" already exists, skipping
+CREATE SEQUENCE
+DROP TABLE
+CREATE TABLE
+CREATE FUNCTION
+psql:/portfolio/portfolio-3-transactions-concurrency/sql/01_transaction_objects.sql:52: NOTICE:  trigger "audit_account_changes" for relation "account" does not exist, skipping
+DROP TRIGGER
+CREATE TRIGGER
+CREATE FUNCTION
+psql:/portfolio/portfolio-3-transactions-concurrency/sql/01_transaction_objects.sql:76: NOTICE:  trigger "check_overdraft_product" for relation "account" does not exist, skipping
+DROP TRIGGER
+CREATE TRIGGER
+CREATE FUNCTION
+psql:/portfolio/portfolio-3-transactions-concurrency/sql/01_transaction_objects.sql:100: NOTICE:  trigger "account_needs_primary_holder" for relation "account" does not exist, skipping
+DROP TRIGGER
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE FUNCTION
+Portfolio 3 objects created.

@@ -1,0 +1,335 @@
+-- run at 2026-11-04 10:44:29 WAT
+SET
+psql:/portfolio/portfolio-3-transactions-concurrency/sql/03_concurrency_anomalies.sql:26: NOTICE:  extension "dblink" already exists, skipping
+CREATE EXTENSION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+ dblink_disconnect 
+-------------------
+
+ dblink_connect 
+----------------
+ OK
+
+ dblink_connect 
+----------------
+ OK
+
+
+====================================================================
+S1. MVCC: NO DIRTY READS, AND READERS DO NOT BLOCK WRITERS
+====================================================================
+A teller (A) starts crediting N1,000,000 but has not committed. An app
+session (B) asks for READ UNCOMMITTED, the weakest level in the SQL standard.
+ [A] BEGIN  =>  BEGIN
+
+ [A] SELECT 'A transaction id = ' || txid_current()  =>  returns A transaction id = 51047
+
+ [A] UPDATE account SET balance = balance + 1000000 WHERE account_number = '3010000001'  =>  UPDATE 1
+
+ [A] SELECT balance FROM account WHERE account_number = '3010000001'  =>  returns 1450000.00
+
+ [B] BEGIN ISOLATION LEVEL READ UNCOMMITTED  =>  BEGIN
+
+ [B] SELECT balance || ' (row version: xmin=' || xmin || ', xmax=' || xmax || ')' FROM account WHERE account_number = '3010000001'  =>  returns 450000.00  (row version: xmin=51030, xmax=51047)
+
+  -> B sees the OLD committed balance immediately, without waiting. PostgreSQL
+     treats READ UNCOMMITTED as READ COMMITTED, so dirty reads are impossible.
+     xmax = A's transaction id: B is reading the old row VERSION that A is replacing (MVCC).
+ [A] ROLLBACK  =>  ROLLBACK
+
+ [B] COMMIT  =>  COMMIT
+
+
+====================================================================
+S2. NON-REPEATABLE READ and PHANTOM: READ COMMITTED vs REPEATABLE READ
+====================================================================
+An auditor (B) reads the total NGN deposits and the number of posted
+transactions twice in one transaction. In between, a deposit (A) commits.
+
+S2a. Auditor at READ COMMITTED (the PostgreSQL default):
+ [B] BEGIN ISOLATION LEVEL READ COMMITTED  =>  BEGIN
+
+ [B] SELECT SUM(balance) FROM account WHERE type_code <> 'DOM_USD'  =>  returns 11416200.00
+
+ [B] SELECT COUNT(*) FROM bank_transaction WHERE status = 'COMPLETED'  =>  returns 48
+
+ [A] BEGIN; INSERT INTO bank_transaction (reference, txn_type, channel, credit_account_id, amount, status, narration, initiated_by, completed_at) SELECT 'DEP-S2A', 'DEPOSIT', 'BRANCH', account_id, 100000, 'COMPLETED', 'Cash deposit', (SELECT employee_id FROM employee WHERE staff_number = 'OT00002'), clock_timestamp() FROM account WHERE account_number = '3010000019'; UPDATE account SET balance = balance + 100000 WHERE account_number = '3010000019'; COMMIT  =>  COMMIT
+
+ [B] SELECT SUM(balance) FROM account WHERE type_code <> 'DOM_USD'  =>  returns 11516200.00
+
+ [B] SELECT COUNT(*) FROM bank_transaction WHERE status = 'COMPLETED'  =>  returns 49
+
+ [B] COMMIT  =>  COMMIT
+
+  -> Within ONE transaction the total changed by 100,000 (NON-REPEATABLE READ)
+     and a new row appeared (PHANTOM). Each statement sees the latest committed data.
+
+S2b. Auditor at REPEATABLE READ:
+ [B] BEGIN ISOLATION LEVEL REPEATABLE READ  =>  BEGIN
+
+ [B] SELECT SUM(balance) FROM account WHERE type_code <> 'DOM_USD'  =>  returns 11516200.00
+
+ [B] SELECT COUNT(*) FROM bank_transaction WHERE status = 'COMPLETED'  =>  returns 49
+
+ [A] BEGIN; INSERT INTO bank_transaction (reference, txn_type, channel, credit_account_id, amount, status, narration, initiated_by, completed_at) SELECT 'DEP-S2B', 'DEPOSIT', 'BRANCH', account_id, 100000, 'COMPLETED', 'Cash deposit', (SELECT employee_id FROM employee WHERE staff_number = 'OT00002'), clock_timestamp() FROM account WHERE account_number = '3010000019'; UPDATE account SET balance = balance + 100000 WHERE account_number = '3010000019'; COMMIT  =>  COMMIT
+
+ [B] SELECT SUM(balance) FROM account WHERE type_code <> 'DOM_USD'  =>  returns 11516200.00
+
+ [B] SELECT COUNT(*) FROM bank_transaction WHERE status = 'COMPLETED'  =>  returns 49
+
+ [B] COMMIT  =>  COMMIT
+
+ [B] SELECT SUM(balance) FROM account WHERE type_code <> 'DOM_USD'  =>  returns 11616200.00
+
+  -> B works on ONE snapshot taken at its first query: both reads agree, so the
+     audit report is internally consistent. The deposit is visible only after B commits.
+
+====================================================================
+S3. LOST UPDATE: two ATM withdrawals from the same account at once
+====================================================================
+Account 3010000003 starts at N450,000. A withdraws N100,000 and B withdraws
+N50,000, so the correct final balance is N300,000. Each session reads the
+balance, computes the new value in "application code", and writes it back.
+
+S3a. The anomaly (READ COMMITTED, plain read-modify-write):
+ [A] BEGIN  =>  BEGIN
+
+ [A] SELECT balance FROM account WHERE account_number = '3010000003'  =>  returns 450000.00
+
+ [B] BEGIN  =>  BEGIN
+
+ [B] SELECT balance FROM account WHERE account_number = '3010000003'  =>  returns 450000.00
+
+ [A] UPDATE account SET balance = 350000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [A] COMMIT  =>  COMMIT
+
+ [B] UPDATE account SET balance = 400000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [B] COMMIT  =>  COMMIT
+
+ [A] SELECT 'final balance = ' || balance FROM account WHERE account_number = '3010000003'  =>  returns final balance = 400000.00
+
+  -> 400,000 instead of 300,000: A's N100,000 withdrawal was LOST (overwritten by B).
+ 
+
+
+S3b. Fix 1: let the database do the arithmetic (atomic UPDATE ... balance - x)
+ [A] BEGIN  =>  BEGIN
+
+ [A] UPDATE account SET balance = balance - 100000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [B] BEGIN  =>  BEGIN
+
+ [B] UPDATE account SET balance = balance - 50000 WHERE account_number = '3010000003'  =>  ... BLOCKED (still waiting after 0.5 s)
+
+       lock monitor: session_B is waiting (Lock / transactionid), blocked by session_A
+
+ [A] COMMIT  =>  COMMIT
+
+ [B] (blocked statement has now finished)  =>  UPDATE 1
+
+ [B] COMMIT  =>  COMMIT
+
+ [A] SELECT 'final balance = ' || balance FROM account WHERE account_number = '3010000003'  =>  returns final balance = 300000.00
+
+  -> B waited for A's row lock, then re-read the committed row (350,000) and
+     subtracted from that: 300,000. Correct.
+ 
+
+
+S3c. Fix 2: pessimistic locking with SELECT ... FOR UPDATE
+ [A] BEGIN  =>  BEGIN
+
+ [A] SELECT balance FROM account WHERE account_number = '3010000003' FOR UPDATE  =>  returns 450000.00
+
+ [B] BEGIN  =>  BEGIN
+
+ [B] SELECT balance FROM account WHERE account_number = '3010000003' FOR UPDATE  =>  ... BLOCKED (still waiting after 0.5 s)
+
+       lock monitor: session_B is waiting (Lock / transactionid), blocked by session_A
+
+ [A] UPDATE account SET balance = 350000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [A] COMMIT  =>  COMMIT
+
+ [B] (blocked statement has now finished)  =>  350000.00
+
+ [B] UPDATE account SET balance = 300000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [B] COMMIT  =>  COMMIT
+
+ [A] SELECT 'final balance = ' || balance FROM account WHERE account_number = '3010000003'  =>  returns final balance = 300000.00
+
+  -> B's read waited until A finished, so B computed from 350,000: 300,000. Correct.
+     transfer_funds() uses this approach.
+ 
+
+
+S3d. Fix 3: optimistic, REPEATABLE READ detects the conflict and the app retries
+ [A] BEGIN ISOLATION LEVEL REPEATABLE READ  =>  BEGIN
+
+ [A] SELECT balance FROM account WHERE account_number = '3010000003'  =>  returns 450000.00
+
+ [B] BEGIN ISOLATION LEVEL REPEATABLE READ  =>  BEGIN
+
+ [B] SELECT balance FROM account WHERE account_number = '3010000003'  =>  returns 450000.00
+
+ [A] UPDATE account SET balance = 350000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [A] COMMIT  =>  COMMIT
+
+ [B] UPDATE account SET balance = 400000 WHERE account_number = '3010000003'  =>  ERROR: could not serialize access due to concurrent update
+
+ [B] ROLLBACK  =>  ROLLBACK
+
+  -> B is refused ("could not serialize access due to concurrent update")
+     instead of silently overwriting A. The application retries B from the start:
+ [B] BEGIN ISOLATION LEVEL REPEATABLE READ  =>  BEGIN
+
+ [B] SELECT balance FROM account WHERE account_number = '3010000003'  =>  returns 350000.00
+
+ [B] UPDATE account SET balance = 300000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [B] COMMIT  =>  COMMIT
+
+ [A] SELECT 'final balance = ' || balance FROM account WHERE account_number = '3010000003'  =>  returns final balance = 300000.00
+
+ 
+
+
+====================================================================
+S4. WRITE SKEW: REPEATABLE READ is not enough, SERIALIZABLE is
+====================================================================
+Rule: Adaeze's savings (3010000001) + current (3010000002) together must
+never go below zero. Together they hold 699,900. At the same moment she
+withdraws 340,000 from current (A) and 400,000 from savings (B). Each session
+checks the combined balance, sees enough money, and updates a DIFFERENT row.
+
+S4a. REPEATABLE READ:
+ [A] BEGIN ISOLATION LEVEL REPEATABLE READ  =>  BEGIN
+
+ [A] SELECT SUM(balance) FROM account WHERE account_number IN ('3010000001','3010000002')  =>  returns 699900.00
+
+ [B] BEGIN ISOLATION LEVEL REPEATABLE READ  =>  BEGIN
+
+ [B] SELECT SUM(balance) FROM account WHERE account_number IN ('3010000001','3010000002')  =>  returns 699900.00
+
+ [A] UPDATE account SET balance = balance - 340000 WHERE account_number = '3010000002'  =>  UPDATE 1
+
+ [B] UPDATE account SET balance = balance - 400000 WHERE account_number = '3010000001'  =>  UPDATE 1
+
+ [A] COMMIT  =>  COMMIT
+
+ [B] COMMIT  =>  COMMIT
+
+ [A] SELECT 'combined balance now = ' || SUM(balance) FROM account WHERE account_number IN ('3010000001','3010000002')  =>  returns combined balance now = -40100.00
+
+  -> Both committed and the combined balance is NEGATIVE: the rule is broken.
+     No row was written by both sessions, so snapshot isolation saw no conflict.
+ 
+
+
+S4b. SERIALIZABLE (Serializable Snapshot Isolation):
+ [A] BEGIN ISOLATION LEVEL SERIALIZABLE  =>  BEGIN
+
+ [A] SELECT SUM(balance) FROM account WHERE account_number IN ('3010000001','3010000002')  =>  returns 699900.00
+
+ [B] BEGIN ISOLATION LEVEL SERIALIZABLE  =>  BEGIN
+
+ [B] SELECT SUM(balance) FROM account WHERE account_number IN ('3010000001','3010000002')  =>  returns 699900.00
+
+ [A] UPDATE account SET balance = balance - 340000 WHERE account_number = '3010000002'  =>  UPDATE 1
+
+ [B] UPDATE account SET balance = balance - 400000 WHERE account_number = '3010000001'  =>  UPDATE 1
+
+ [A] COMMIT  =>  COMMIT
+
+ [B] COMMIT  =>  ERROR: could not serialize access due to read/write dependencies among transactions
+
+ [A] SELECT 'combined balance now = ' || SUM(balance) FROM account WHERE account_number IN ('3010000001','3010000002')  =>  returns combined balance now = 359900.00
+
+  -> PostgreSQL tracked what each transaction READ, detected the dangerous
+     read/write dependency cycle, and aborted B. Retrying B would re-read 359,900
+     and correctly refuse the N400,000 withdrawal.
+ [B] ROLLBACK  =>  ROLLBACK
+
+ 
+
+
+====================================================================
+S5. DEADLOCK: two transfers in opposite directions
+====================================================================
+S5a. Naive order (debit account first, then credit account):
+     A transfers 1 -> 3, B transfers 3 -> 1, at the same time.
+ [A] BEGIN  =>  BEGIN
+
+ [A] UPDATE account SET balance = balance - 10000 WHERE account_number = '3010000001'  =>  UPDATE 1
+
+ [B] BEGIN  =>  BEGIN
+
+ [B] UPDATE account SET balance = balance - 20000 WHERE account_number = '3010000003'  =>  UPDATE 1
+
+ [A] UPDATE account SET balance = balance + 10000 WHERE account_number = '3010000003'  =>  ... BLOCKED (still waiting after 0.5 s)
+
+       lock monitor: session_A is waiting (Lock / transactionid), blocked by session_B
+
+ [B] UPDATE account SET balance = balance + 20000 WHERE account_number = '3010000001'  =>  ... completed within 0.5 s
+
+  (A held 3010000001 and wanted 3010000003; B held 3010000003 and wanted 3010000001:
+   a cycle in which neither can proceed. A had been waiting longer, so A's
+   deadlock_timeout (1 s) expired first: PostgreSQL found the cycle, aborted A as
+   the victim and released its lock, which is why B's statement completed.)
+    (conductor waits 1.5 s)
+
+ [A] (blocked statement has now finished)  =>  ERROR: deadlock detected
+
+ [B] (blocked statement has now finished)  =>  UPDATE 1
+
+ [A] COMMIT  =>  ROLLBACK
+
+ [B] COMMIT  =>  COMMIT
+
+  -> One transaction was chosen as the victim and rolled back; the other completed.
+ 
+
+
+S5b. transfer_funds() locks accounts in account_id order, whichever direction:
+ [A] BEGIN  =>  BEGIN
+
+ [A] SELECT txn_status || ': ' || message FROM transfer_funds('3010000001', '3010000003', 10000)  =>  returns COMPLETED: 10000 moved from 3010000001 to 3010000003
+
+ [B] BEGIN  =>  BEGIN
+
+ [B] SELECT txn_status || ': ' || message FROM transfer_funds('3010000003', '3010000001', 20000)  =>  ... BLOCKED (still waiting after 0.5 s)
+
+       lock monitor: session_B is waiting (Lock / transactionid), blocked by session_A
+
+ [A] COMMIT  =>  COMMIT
+
+ [B] (blocked statement has now finished)  =>  COMPLETED: 20000 moved from 3010000003 to 3010000001
+
+ [B] COMMIT  =>  COMMIT
+
+  -> B queued behind A for the FIRST lock (account 1) instead of grabbing account 3,
+     so no cycle could form. Both transfers completed, with no deadlock and no retry.
+
+====================================================================
+AFTER ALL SCENARIOS
+====================================================================
+ dblink_disconnect | dblink_disconnect 
+-------------------+-------------------
+ OK                | OK
+
+ deadlocks_detected_in_this_database 
+-------------------------------------
+                                   1
+
+ accounts_where_balance_does_not_match_history 
+-----------------------------------------------
+                                             0
+

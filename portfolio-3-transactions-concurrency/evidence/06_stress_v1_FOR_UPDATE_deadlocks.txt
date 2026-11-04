@@ -1,0 +1,89 @@
+-- run at 2026-11-04 10:36:03 WAT
+-- FIRST VERSION of transfer_funds(): accounts and customer locked with FOR UPDATE
+-- (kept as evidence of the deadlock problem described in README section 5)
+Portfolio 3 objects created.
+CREATE FUNCTION
+DROP TABLE
+SELECT 1
+ snapshot | total_money_in_16_accounts | deadlocks_so_far 
+----------+----------------------------+------------------
+ baseline |                11356200.00 |              475
+(1 row)
+
+pgbench (16.15 (Debian 16.15-1.pgdg13+2))
+transaction type: /portfolio/portfolio-3-transactions-concurrency/stress/pgbench_transfer_safe.sql
+scaling factor: 1
+query mode: simple
+number of clients: 16
+number of threads: 4
+maximum number of tries: 20
+number of transactions per client: 250
+number of transactions actually processed: 4000/4000
+number of failed transactions: 0 (0.000%)
+number of serialization failures: 0 (0.000%)
+number of deadlock failures: 0 (0.000%)
+number of transactions retried: 120 (3.000%)
+total number of retries: 146
+latency average = 305.258 ms
+initial connection time = 6.080 ms
+tps = 52.414645 (without initial connection time)
+Transfers posted during the run, by outcome:
+  status   | transfers | total_amount 
+-----------+-----------+--------------
+ COMPLETED |      3249 |   3459156.00
+ FAILED    |       751 |    767516.00
+(2 rows)
+
+Most common failure reasons (business rules enforced under load):
+                   failure_reason                    | transfers 
+-----------------------------------------------------+-----------
+ Daily limit exceeded: limit n already spent today n |       751
+(1 row)
+
+CHECK 1: money conservation (difference must be 0)
+ total_before | total_after | money_created_or_destroyed 
+--------------+-------------+----------------------------
+  11356200.00 | 11356200.00 |                       0.00
+(1 row)
+
+CHECK 2: stored balance vs transaction history (mismatches must be 0)
+ account_number | stored_balance | balance_from_history | difference 
+----------------+----------------+----------------------+------------
+(0 rows)
+
+CHECK 3: deadlocks detected by PostgreSQL during the run
+ deadlocks_during_run 
+----------------------
+                  146
+(1 row)
+
+
+-- ================================================================
+-- PostgreSQL server log for the last deadlocks of this run (docker logs owotrust-pg):
+-- note the CONTEXT: the FOR KEY SHARE lock taken by the foreign-key check of the
+-- INSERT INTO bank_transaction that records a FAILED transfer
+-- ================================================================
+--
+2026-11-04 10:37:19.972 WAT [17540] ERROR:  deadlock detected
+2026-11-04 10:37:19.972 WAT [17540] DETAIL:  Process 17540 waits for ShareLock on transaction 21645; blocked by process 17541.
+	Process 17541 waits for ShareLock on transaction 21694; blocked by process 17546.
+	Process 17546 waits for AccessExclusiveLock on tuple (4,72) of relation 19081 of database 16384; blocked by process 17540.
+	Process 17540: SELECT * FROM transfer_funds(stress_account(13), stress_account(10), 1333);
+	Process 17541: SELECT * FROM transfer_funds(stress_account(10), stress_account(1), 538);
+	Process 17546: SELECT * FROM transfer_funds(stress_account(10), stress_account(1), 1507);
+2026-11-04 10:37:19.972 WAT [17540] HINT:  See server log for query details.
+2026-11-04 10:37:19.972 WAT [17540] CONTEXT:  while locking tuple (4,72) in relation "account"
+	SQL statement "SELECT 1 FROM account a
+	        WHERE a.account_number IN (p_from, p_to)
+--
+2026-11-04 10:37:19.975 WAT [17541] ERROR:  deadlock detected
+2026-11-04 10:37:19.975 WAT [17541] DETAIL:  Process 17541 waits for ShareLock on transaction 21694; blocked by process 17546.
+	Process 17546 waits for ShareLock on transaction 21645; blocked by process 17541.
+	Process 17541: SELECT * FROM transfer_funds(stress_account(10), stress_account(1), 538);
+	Process 17546: SELECT * FROM transfer_funds(stress_account(10), stress_account(1), 1507);
+2026-11-04 10:37:19.975 WAT [17541] HINT:  See server log for query details.
+2026-11-04 10:37:19.975 WAT [17541] CONTEXT:  while locking tuple (8,77) in relation "account"
+	SQL statement "SELECT 1 FROM ONLY "public"."account" x WHERE "account_id" OPERATOR(pg_catalog.=) $1 FOR KEY SHARE OF x"
+	SQL statement "INSERT INTO bank_transaction (reference, txn_type, channel, debit_account_id, credit_account_id,
+	                                          amount, status, narration, failure_reason, created_at)
+	            VALUES (v_ref, 'TRANSFER', p_channel, v_from.account_id, v_to.account_id,
