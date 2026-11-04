@@ -1,0 +1,223 @@
+-- run at 2026-11-04 11:36:32 WAT
+
+======================================================================
+SETUP: shard both collections, then import the same documents into each
+======================================================================
+primary shard for database owotrust: shard2rs
+
+Chunks of statements_hashed:
+   {"accountNumber":{}} -> {"accountNumber":{"high":-1073741824,"low":2,"unsigned":false}}   on shard2rs
+   {"accountNumber":{"high":-1073741824,"low":2,"unsigned":false}} -> {"accountNumber":{"high":0,"low":0,"unsigned":false}}   on shard2rs
+   {"accountNumber":{"high":0,"low":0,"unsigned":false}} -> {"accountNumber":{"high":1073741823,"low":-2,"unsigned":false}}   on shard1rs
+   {"accountNumber":{"high":1073741823,"low":-2,"unsigned":false}} -> {"accountNumber":{}}   on shard1rs
+
+Chunks of statements_by_month:
+   {"month":{}} -> {"month":"2026-09"}   on shard2rs
+   {"month":"2026-09"} -> {"month":"2026-10"}   on shard1rs
+   {"month":"2026-10"} -> {"month":{}}   on shard2rs
+  statements_hashed: 2026-11-04T10:36:34.981+0000	132386 document(s) imported successfully. 0 document(s) failed to import.
+  statements_by_month: 2026-11-04T10:36:37.632+0000	132386 document(s) imported successfully. 0 document(s) failed to import.
+
+======================================================================
+S1. DATA DISTRIBUTION across the two shards
+======================================================================
+
+--- statements_hashed ---
+Shard shard1rs at shard1rs/mongo-shard1:27018
+{
+  data: '37.92MiB',
+  docs: 66109,
+  chunks: 2,
+  'estimated data per chunk': '18.96MiB',
+  'estimated docs per chunk': 33054
+}
+---
+Shard shard2rs at shard2rs/mongo-shard2:27018
+{
+  data: '38.11MiB',
+  docs: 66277,
+  chunks: 2,
+  'estimated data per chunk': '19.05MiB',
+  'estimated docs per chunk': 33138
+}
+---
+Totals
+{
+  data: '76.03MiB',
+  docs: 132386,
+  chunks: 4,
+  'Shard shard1rs': [
+    '49.87 % data',
+    '49.93 % docs in cluster',
+    '601B avg obj size on shard'
+  ],
+  'Shard shard2rs': [
+    '50.12 % data',
+    '50.06 % docs in cluster',
+    '602B avg obj size on shard'
+  ]
+}
+
+--- statements_by_month ---
+Shard shard2rs at shard2rs/mongo-shard2:27018
+{
+  data: '51.08MiB',
+  docs: 88721,
+  chunks: 2,
+  'estimated data per chunk': '25.54MiB',
+  'estimated docs per chunk': 44360
+}
+---
+Shard shard1rs at shard1rs/mongo-shard1:27018
+{
+  data: '24.95MiB',
+  docs: 43665,
+  chunks: 1,
+  'estimated data per chunk': '24.95MiB',
+  'estimated docs per chunk': 43665
+}
+---
+Totals
+{
+  data: '76.03MiB',
+  docs: 132386,
+  chunks: 3,
+  'Shard shard2rs': [
+    '67.18 % data',
+    '67.01 % docs in cluster',
+    '603B avg obj size on shard'
+  ],
+  'Shard shard1rs': [
+    '32.81 % data',
+    '32.98 % docs in cluster',
+    '599B avg obj size on shard'
+  ]
+}
+
+======================================================================
+S2. QUERY ROUTING: does mongos ask ONE shard or ALL of them?
+======================================================================
+[
+  {
+    collection: 'statements_hashed',
+    filter: '{"accountNumber":"3100000100"}',
+    routerStage: 'SINGLE_SHARD',
+    shardsAsked: 'shard1rs',
+    docsExaminedPerShard: 'shard1rs=3',
+    returned: 3
+  },
+  {
+    collection: 'statements_hashed',
+    filter: '{"month":"2026-10"}',
+    routerStage: 'SHARD_MERGE',
+    shardsAsked: 'shard1rs, shard2rs',
+    docsExaminedPerShard: 'shard1rs=66109, shard2rs=66277',
+    returned: 44633
+  },
+  {
+    collection: 'statements_by_month',
+    filter: '{"month":"2026-10"}',
+    routerStage: 'SINGLE_SHARD',
+    shardsAsked: 'shard2rs',
+    docsExaminedPerShard: 'shard2rs=44633',
+    returned: 44633
+  },
+  {
+    collection: 'statements_by_month',
+    filter: '{"accountNumber":"3100000100"}',
+    routerStage: 'SHARD_MERGE',
+    shardsAsked: 'shard1rs, shard2rs',
+    docsExaminedPerShard: 'shard1rs=43665, shard2rs=88721',
+    returned: 3
+  }
+]
+SINGLE_SHARD = targeted query (shard key in the filter); SHARD_MERGE = scatter-gather to every
+shard, with mongos merging the answers. No shard key serves every query: choose it for the
+most important access path. For OwoTrust that is 'statements of ONE account'.
+
+======================================================================
+S3. DISTRIBUTED AGGREGATION: October debits by channel, computed on both shards
+======================================================================
+[
+  {
+    _id: 'ATM',
+    debits: 4205,
+    total: Decimal128('106165580.00')
+  },
+  {
+    _id: 'BRANCH',
+    debits: 1255,
+    total: Decimal128('35835750.00')
+  },
+  {
+    _id: 'MOBILE',
+    debits: 23939,
+    total: Decimal128('636496630.00')
+  },
+  {
+    _id: 'POS',
+    debits: 3002,
+    total: Decimal128('76899650.00')
+  },
+  {
+    _id: 'SYSTEM',
+    debits: 1782,
+    total: Decimal128('89100.00')
+  },
+  {
+    _id: 'USSD',
+    debits: 4196,
+    total: Decimal128('114102390.00')
+  },
+  {
+    _id: 'WEB',
+    debits: 3792,
+    total: Decimal128('95954880.00')
+  }
+]
+(46 ms; each shard computes a partial $group and mongos merges them.
+ These figures must equal Portfolio 4 M5 / PostgreSQL X1, e.g. ATM 4205 / 106165580.00.)
+{
+  splitPipeline: true,
+  mergeType: 'mongos',
+  shardsUsed: [
+    'shard2rs',
+    'shard1rs'
+  ]
+}
+
+======================================================================
+S4. NEW WRITES: 2,000 November statement buckets, spread over the whole customer base
+======================================================================
+statements_hashed: inserted 2000 November documents
+statements_by_month: inserted 2000 November documents
+(the per-shard counts of these new documents are read directly from each shard by sharding_demo.sh)
+
+======================================================================
+S5. WHERE DID THE NEW NOVEMBER WRITES GO? (each shard asked directly)
+======================================================================
+  statements_hashed      shard1rs:   992   shard2rs:  1008
+  statements_by_month    shard1rs:     0   shard2rs:  2000
+  -> hashed key: new writes are shared by both shards. Month range key: EVERY new write
+     goes to the one shard that owns the last range: a write hot spot that adding more
+     shards would not relieve.
+
+======================================================================
+S6. AVAILABILITY: one shard goes offline
+======================================================================
+  account 3100000100 lives on shard1rs; account 3100000104 lives on shard2rs
+  dist-mongo-shard2 STOPPED
+  query: statement of 3100000100 (on the surviving shard)
+    OK: 3 monthly statements returned
+  query: statement of 3100000104 (on the stopped shard)
+    ERROR: Encountered non-retryable error during query :: caused by :: operation exceeded time limit
+  query: all October statements (needs every shard)
+    ERROR: Encountered non-retryable error during query :: caused by :: Could not find host matching read preference { mode: "primary" } for set shard2rs
+  query: same, with allowPartialResults: true (the application accepts an incomplete answer)
+    PARTIAL: 22325 of 44,633 statements, partialResultsReturned = true
+  -> customers whose data is on the healthy shard are unaffected. Queries that need the
+     failed shard fail, or return a partial answer if the application explicitly accepts one.
+     This is why each shard is itself a 3-member replica set in production: a failed node
+     is replaced by an automatic election, and the shard stays available.
+  query: after restarting shard2: all October statements
+    OK: 44633 statements

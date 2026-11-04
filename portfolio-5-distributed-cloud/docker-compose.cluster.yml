@@ -1,0 +1,111 @@
+# Portfolio 5: distributed OwoTrust databases (separate Docker project "owotrust-dist").
+#
+#   docker compose -f portfolio-5-distributed-cloud/docker-compose.cluster.yml up -d
+#   docker compose -f portfolio-5-distributed-cloud/docker-compose.cluster.yml down -v   # remove everything
+#
+# A. PostgreSQL streaming replication (3 nodes):
+#      pg-primary   read-write                                    localhost:5441
+#      pg-replica1  hot standby, SYNCHRONOUS candidate            localhost:5442
+#      pg-replica2  hot standby, ASYNCHRONOUS                     localhost:5443
+# B. MongoDB sharded cluster (4 processes):
+#      mongo-cfg (config server replica set), mongo-shard1, mongo-shard2, mongos router  localhost:27030
+# Passwords are for local development only.
+name: owotrust-dist
+
+x-pg-common: &pg-common
+  image: postgres:16
+  environment:
+    POSTGRES_USER: owotrust
+    POSTGRES_PASSWORD: owotrust_dev
+    POSTGRES_DB: owotrust_bank
+    TZ: Africa/Lagos
+    PGTZ: Africa/Lagos
+    PGPASSWORD: owotrust_dev              # lets psql inside the containers connect without prompting
+
+x-mongo-common: &mongo-common
+  image: mongo:7.0
+  volumes:
+    - ../:/portfolio:ro
+
+services:
+  pg-primary:
+    <<: *pg-common
+    container_name: dist-pg-primary
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10",
+              "-c", "max_replication_slots=10", "-c", "wal_keep_size=256MB"]
+    ports: ["5441:5432"]
+    volumes:
+      - pg_primary:/var/lib/postgresql/data
+      - ./postgres/primary-init.sh:/docker-entrypoint-initdb.d/00-replication.sh:ro
+      - ../:/portfolio:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U owotrust -d owotrust_bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  pg-replica1:
+    <<: *pg-common
+    container_name: dist-pg-replica1
+    user: postgres
+    entrypoint: ["bash", "/scripts/replica-entrypoint.sh", "replica1"]
+    ports: ["5442:5432"]
+    volumes:
+      - pg_replica1:/var/lib/postgresql/data
+      - ./postgres:/scripts:ro
+      - ../:/portfolio:ro
+    depends_on:
+      pg-primary: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U owotrust -d owotrust_bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  pg-replica2:
+    <<: *pg-common
+    container_name: dist-pg-replica2
+    user: postgres
+    entrypoint: ["bash", "/scripts/replica-entrypoint.sh", "replica2"]
+    ports: ["5443:5432"]
+    volumes:
+      - pg_replica2:/var/lib/postgresql/data
+      - ./postgres:/scripts:ro
+      - ../:/portfolio:ro
+    depends_on:
+      pg-primary: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U owotrust -d owotrust_bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  mongo-cfg:
+    <<: *mongo-common
+    container_name: dist-mongo-cfg
+    command: ["mongod", "--configsvr", "--replSet", "cfgrs", "--port", "27019", "--bind_ip_all",
+              "--wiredTigerCacheSizeGB", "0.25"]
+
+  mongo-shard1:
+    <<: *mongo-common
+    container_name: dist-mongo-shard1
+    command: ["mongod", "--shardsvr", "--replSet", "shard1rs", "--port", "27018", "--bind_ip_all",
+              "--wiredTigerCacheSizeGB", "0.5"]
+
+  mongo-shard2:
+    <<: *mongo-common
+    container_name: dist-mongo-shard2
+    command: ["mongod", "--shardsvr", "--replSet", "shard2rs", "--port", "27018", "--bind_ip_all",
+              "--wiredTigerCacheSizeGB", "0.5"]
+
+  mongos:
+    <<: *mongo-common
+    container_name: dist-mongos
+    command: ["mongos", "--configdb", "cfgrs/mongo-cfg:27019", "--port", "27017", "--bind_ip_all"]
+    ports: ["27030:27017"]
+    depends_on: [mongo-cfg, mongo-shard1, mongo-shard2]
+
+volumes:
+  pg_primary:
+  pg_replica1:
+  pg_replica2:

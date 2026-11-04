@@ -1,0 +1,36 @@
+-- run at 2026-11-04 11:35:00 WAT
+                  ?column?                   
+---------------------------------------------
+ primary ready: 20 accounts, 52 transactions
+(1 row)
+
+Containers:
+dist-mongo-cfg	mongo:7.0	Up 12 seconds
+dist-mongo-shard1	mongo:7.0	Up 12 seconds
+dist-mongo-shard2	mongo:7.0	Up 12 seconds
+dist-mongos	mongo:7.0	Up 12 seconds
+dist-pg-primary	postgres:16	Up 12 seconds (healthy)
+dist-pg-replica1	postgres:16	Up 9 seconds (healthy)
+dist-pg-replica2	postgres:16	Up 9 seconds (healthy)
+Replication right after loading:
+ application_name |   state   | sync_state | bytes_behind 
+------------------+-----------+------------+--------------
+ replica1         | streaming | async      |            0
+ replica2         | streaming | async      |            0
+(2 rows)
+
+replica1: 52 transactions, in recovery = true
+replica2: 52 transactions, in recovery = true
+MongoDB shards:
+[
+  {
+    shard: 'shard1rs',
+    host: 'shard1rs/mongo-shard1:27018',
+    state: 1
+  },
+  {
+    shard: 'shard2rs',
+    host: 'shard2rs/mongo-shard2:27018',
+    state: 1
+  }
+]

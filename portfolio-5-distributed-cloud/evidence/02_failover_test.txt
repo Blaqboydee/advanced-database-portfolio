@@ -1,0 +1,130 @@
+-- run at 2026-11-04 11:36:23 WAT
+
+======================================================================
+F1. BEFORE: replica1 is the synchronous standby
+======================================================================
+[primary] SELECT application_name, state, sync_state FROM pg_stat_replication ORDER BY 1; 
+     application_name |   state   | sync_state 
+    ------------------+-----------+------------
+     replica1         | streaming | sync
+     replica2         | streaming | async
+    (2 rows)
+    
+[primary] SHOW synchronous_standby_names; 
+     synchronous_standby_names 
+    ---------------------------
+     FIRST 1 (replica1)
+    (1 row)
+    
+
+======================================================================
+F2. LIVE TRAFFIC: a client posts deposits FO-000001, FO-000002, ... non-stop
+======================================================================
+  deposits acknowledged so far: 231
+
+======================================================================
+F3. CRASH: the primary is killed while the client is writing
+======================================================================
+  dist-pg-primary killed at 11:36:28; container state: exited
+  client side (the last lines of its log):
+    psql: error: connection to server at "pg-primary" (172.19.0.3), port 5432 failed: Connection refused
+    	Is the server running on that host and accepting TCP/IP connections?
+    11:36:28.210 client: write FO-000235 FAILED
+  deposits the client was told SUCCEEDED: 234 (last one: FO-000234)
+
+======================================================================
+F4. FAILOVER: promote replica1 (the synchronous standby) to primary
+======================================================================
+[replica1] SELECT pg_is_in_recovery() AS still_a_standby; 
+     still_a_standby 
+    -----------------
+     t
+    (1 row)
+    
+[replica1] SELECT pg_promote(wait => true) AS promoted; 
+     promoted 
+    ----------
+     t
+    (1 row)
+    
+[replica1] SELECT pg_is_in_recovery() AS still_a_standby, pg_walfile_name(pg_current_wal_lsn()) AS current_wal_file, ('x' || substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8))::bit(32)::int AS timeline; 
+     still_a_standby |     current_wal_file     | timeline 
+    -----------------+--------------------------+----------
+     f               | 000000020000000000000009 |        2
+    (1 row)
+    
+  -> the first 8 hex digits of the WAL file name are the TIMELINE: promotion started timeline 2,
+     so WAL written after the failover can never be confused with the old primary's.
+  RTO (crash -> first deposit accepted by the new primary): 1783 ms
+      (promotion here is triggered by this script straight away. In production a tool such as
+       Patroni must first DETECT the failure, typically after 10-30 s of missed heartbeats.)
+
+======================================================================
+F5. RPO CHECK: is every acknowledged deposit on the new primary?
+======================================================================
+[replica1] CREATE TEMP TABLE acked (reference text); COPY acked FROM '/tmp/acked.txt'; SELECT (SELECT COUNT(*) FROM acked) AS acknowledged_to_client, (SELECT COUNT(*) FROM acked a JOIN bank_transaction t ON t.reference = a.reference) AS present_on_new_primary, (SELECT COUNT(*) FROM acked a WHERE NOT EXISTS (SELECT 1 FROM bank_transaction t WHERE t.reference = a.reference)) AS LOST, (SELECT COUNT(*) FROM bank_transaction WHERE reference LIKE 'FO-0%') AS fo_rows_on_new_primary; 
+    CREATE TABLE
+    COPY 234
+     acknowledged_to_client | present_on_new_primary | lost | fo_rows_on_new_primary 
+    ------------------------+------------------------+------+------------------------
+                        234 |                    234 |    0 |                    234
+    (1 row)
+    
+  -> LOST = 0: no deposit that a customer was told had succeeded has disappeared (RPO = 0).
+     If fo_rows_on_new_primary is one more than acknowledged, that deposit committed but its
+     confirmation never reached the client: exactly the case idempotent retries must handle.
+  Balance check on the new primary (stored balance vs transaction history):
+[replica1] SELECT COUNT(*) AS accounts_where_balance_does_not_match_history FROM account a LEFT JOIN (SELECT account_id, SUM(delta) AS derived FROM (SELECT credit_account_id AS account_id, amount AS delta FROM bank_transaction WHERE status IN ('COMPLETED','REVERSED') AND credit_account_id IS NOT NULL UNION ALL SELECT debit_account_id, -amount FROM bank_transaction WHERE status IN ('COMPLETED','REVERSED') AND debit_account_id IS NOT NULL) l GROUP BY account_id) d ON d.account_id = a.account_id WHERE a.balance <> COALESCE(d.derived, 0); 
+     accounts_where_balance_does_not_match_history 
+    -----------------------------------------------
+                                                 0
+    (1 row)
+    
+  What the ASYNCHRONOUS replica2 had received when the primary died (it may be behind):
+[replica2] SELECT COUNT(*) AS fo_rows_on_replica2 FROM bank_transaction WHERE reference LIKE 'FO-0%'; 
+     fo_rows_on_replica2 
+    ---------------------
+                     234
+    (1 row)
+    
+
+======================================================================
+F6. RECONFIGURE: replica2 follows the new primary
+======================================================================
+[replica1] SELECT pg_create_physical_replication_slot('replica2_slot'); 
+     pg_create_physical_replication_slot 
+    -------------------------------------
+     (replica2_slot,)
+    (1 row)
+    
+[replica2] ALTER SYSTEM SET primary_conninfo = 'host=pg-replica1 port=5432 user=replicator password=replicator_dev application_name=replica2'; 
+    ALTER SYSTEM
+[replica2] SELECT pg_reload_conf(); 
+     pg_reload_conf 
+    ----------------
+     t
+    (1 row)
+    
+[replica1] SELECT application_name, state, sync_state FROM pg_stat_replication; 
+     application_name |   state   | sync_state 
+    ------------------+-----------+------------
+     replica2         | streaming | async
+    (1 row)
+    
+[replica1] SELECT post_deposit('3010000001', 100, 'FO-NEW-TIMELINE') AS written_on_new_primary; 
+     written_on_new_primary 
+    ------------------------
+     FO-NEW-TIMELINE
+    (1 row)
+    
+[replica2] SELECT reference FROM bank_transaction WHERE reference IN ('FO-AFTER-FAILOVER', 'FO-NEW-TIMELINE') ORDER BY 1; 
+         reference     
+    -------------------
+     FO-AFTER-FAILOVER
+     FO-NEW-TIMELINE
+    (2 rows)
+    
+  -> replica2 switched to the new timeline and replicates from replica1. The old primary
+     cannot simply restart: its WAL may contain un-replicated changes, so it must be rebuilt
+     with pg_rewind or a fresh pg_basebackup before rejoining as a standby.
+     New primary: replica1 has no synchronous standby, so RPO is again > 0 until one is added.

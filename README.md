@@ -30,7 +30,7 @@ The same case study is used in all five portfolio activities.
 | 2 | Query Processing and Optimisation | [portfolio-2-query-optimisation/](portfolio-2-query-optimisation/) | ✅ Complete |
 | 3 | Transactions and Concurrency | [portfolio-3-transactions-concurrency/](portfolio-3-transactions-concurrency/) | ✅ Complete |
 | 4 | NoSQL and Advanced Data Models | [portfolio-4-nosql/](portfolio-4-nosql/) | ✅ Complete |
-| 5 | Distributed and Cloud Database | [portfolio-5-distributed-cloud/](portfolio-5-distributed-cloud/) | ⏳ Planned |
+| 5 | Distributed and Cloud Database | [portfolio-5-distributed-cloud/](portfolio-5-distributed-cloud/) | ✅ Complete |
 
 Each folder has its own README explaining what was built, how it was tested, and where the evidence is.
 
@@ -45,7 +45,7 @@ Each folder has its own README explaining what was built, how it was tested, and
 | Mermaid | ER diagram, rendered by GitHub |
 | Python 3 (standard library only) | Benchmark runner for Portfolio 2 ([benchmark.py](portfolio-2-query-optimisation/benchmark.py)) |
 | MongoDB 7.0, Redis 7.4, Neo4j 5.26 (Docker, `nosql` profile) | Document, key-value and graph models (Portfolio 4) |
-| *(planned)* PostgreSQL streaming replication / MongoDB replica set | Distributed exercise (Portfolio 5) |
+| PostgreSQL streaming replication (3 nodes), MongoDB sharded cluster (Docker project `owotrust-dist`) | Replication, failover and sharding (Portfolio 5) |
 
 ## Running the project
 
@@ -58,6 +58,7 @@ docker compose up -d                          # PostgreSQL on localhost:5433 (us
 ./portfolio-3-transactions-concurrency/run_all.sh  # ACID demos, anomalies, stress + crash tests (~1.5 min)
 docker compose --profile nosql up -d          # adds MongoDB, Redis and Neo4j
 ./portfolio-4-nosql/run_all.sh                # NoSQL pipeline, queries and cross-checks (~1 min)
+./portfolio-5-distributed-cloud/run_all.sh    # replicated + sharded clusters, failover test (~3 min)
 docker exec -it owotrust-pg psql -U owotrust -d owotrust_bank   # interactive SQL shell
 ```
 
@@ -70,7 +71,7 @@ advanced-database-portfolio/
 ├── portfolio-2-query-optimisation/   bulk data, workload, execution plans, indexes, benchmarks, analysis
 ├── portfolio-3-transactions-concurrency/  transfer function, ACID demos, isolation anomalies, stress + crash tests
 ├── portfolio-4-nosql/                MongoDB documents, Redis key-value, Neo4j fraud graph
-├── portfolio-5-distributed-cloud/
+├── portfolio-5-distributed-cloud/    replication, failover under load, sharding, cloud design
 └── README.md
 ```
 

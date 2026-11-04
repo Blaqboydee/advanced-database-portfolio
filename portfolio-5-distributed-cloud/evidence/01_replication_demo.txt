@@ -1,0 +1,241 @@
+-- run at 2026-11-04 11:35:05 WAT
+
+======================================================================
+R1. TOPOLOGY: one primary streaming its write-ahead log (WAL) to two hot standbys
+======================================================================
+[primary] SELECT application_name, state, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes_behind, write_lag, flush_lag, replay_lag FROM pg_stat_replication ORDER BY application_name; 
+     application_name |   state   | sync_state | bytes_behind |    write_lag    |   flush_lag    |   replay_lag    
+    ------------------+-----------+------------+--------------+-----------------+----------------+-----------------
+     replica1         | streaming | async      |            0 | 00:00:00.000166 | 00:00:00.00054 | 00:00:00.000602
+     replica2         | streaming | async      |            0 | 00:00:00.000194 | 00:00:00.00052 | 00:00:00.000634
+    (2 rows)
+    
+[replica1] SELECT pg_is_in_recovery() AS replica1_is_standby, pg_last_wal_replay_lsn() AS replayed_up_to; 
+     replica1_is_standby | replayed_up_to 
+    ---------------------+----------------
+     t                   | 0/4092470
+    (1 row)
+    
+[replica2] SELECT pg_is_in_recovery() AS replica2_is_standby, pg_last_wal_replay_lsn() AS replayed_up_to; 
+     replica2_is_standby | replayed_up_to 
+    ---------------------+----------------
+     t                   | 0/4092470
+    (1 row)
+    
+[primary] SELECT slot_name, active, wal_status FROM pg_replication_slots ORDER BY slot_name; 
+       slot_name   | active | wal_status 
+    ---------------+--------+------------
+     replica1_slot | t      | reserved
+     replica2_slot | t      | reserved
+    (2 rows)
+    
+
+======================================================================
+R2. A DEPOSIT ON THE PRIMARY APPEARS ON BOTH REPLICAS
+======================================================================
+  Both replicas start polling for reference REPL-0001 BEFORE it exists; then the primary commits it.
+[primary] SELECT post_deposit('3010000001', 25000, 'REPL-0001') AS committed_on_primary; 
+     committed_on_primary 
+    ----------------------
+     REPL-0001
+    (1 row)
+    
+    replica1: visible 4.97 ms after the primary wrote it
+    replica2: visible 4.59 ms after the primary wrote it
+[primary] SELECT application_name, state, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes_behind, write_lag, flush_lag, replay_lag FROM pg_stat_replication ORDER BY application_name; 
+     application_name |   state   | sync_state | bytes_behind |    write_lag    |    flush_lag    |   replay_lag    
+    ------------------+-----------+------------+--------------+-----------------+-----------------+-----------------
+     replica1         | streaming | async      |            0 | 00:00:00.000219 | 00:00:00.00192  | 00:00:00.001923
+     replica2         | streaming | async      |            0 | 00:00:00.000167 | 00:00:00.000947 | 00:00:00.001166
+    (2 rows)
+    
+
+======================================================================
+R3. REPLICAS ARE READ-ONLY
+======================================================================
+[replica1] SELECT post_deposit('3010000001', 1, 'REPL-WRITE-TRY'); 
+    ERROR:  cannot execute INSERT in a read-only transaction
+    CONTEXT:  SQL statement "INSERT INTO bank_transaction (reference, txn_type, channel, credit_account_id, amount, status, narration, completed_at)
+        SELECT v_ref, 'DEPOSIT', 'MOBILE', account_id, p_amount, 'COMPLETED', 'Card funding', clock_timestamp()
+        FROM account WHERE account_number = p_account"
+    PL/pgSQL function post_deposit(character,numeric,character varying) line 4 at SQL statement
+  -> every write must go to the primary; replicas can only serve reads.
+
+======================================================================
+R4. STALE READ: an asynchronous replica can return OLD data
+======================================================================
+  Replay on replica2 is paused to simulate a replica that has fallen behind (slow network or disk).
+[replica2] SELECT pg_wal_replay_pause(); 
+     pg_wal_replay_pause 
+    ---------------------
+     
+    (1 row)
+    
+[primary] SELECT post_deposit('3010000003', 70000, 'REPL-0002') AS committed_on_primary; 
+     committed_on_primary 
+    ----------------------
+     REPL-0002
+    (1 row)
+    
+[primary] SELECT balance AS balance_on_primary FROM account WHERE account_number = '3010000003'; 
+     balance_on_primary 
+    --------------------
+              520000.00
+    (1 row)
+    
+[replica1] SELECT balance AS balance_on_replica1 FROM account WHERE account_number = '3010000003'; 
+     balance_on_replica1 
+    ---------------------
+               520000.00
+    (1 row)
+    
+[replica2] SELECT balance AS balance_on_replica2 FROM account WHERE account_number = '3010000003'; 
+     balance_on_replica2 
+    ---------------------
+               450000.00
+    (1 row)
+    
+[primary] SELECT application_name, state, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes_behind, write_lag, flush_lag, replay_lag FROM pg_stat_replication ORDER BY application_name; 
+     application_name |   state   | sync_state | bytes_behind |    write_lag    |    flush_lag    |   replay_lag    
+    ------------------+-----------+------------+--------------+-----------------+-----------------+-----------------
+     replica1         | streaming | async      |            0 | 00:00:00.000442 | 00:00:00.001558 | 00:00:00.001894
+     replica2         | streaming | async      |          528 | 00:00:00.0007   | 00:00:00.001858 | 00:00:00.001858
+    (2 rows)
+    
+  -> replica2 shows the balance WITHOUT the N70,000 deposit: a customer routed to it
+     would see money 'missing'. The data is eventually consistent, not immediately.
+[replica2] SELECT pg_wal_replay_resume(); 
+     pg_wal_replay_resume 
+    ----------------------
+     
+    (1 row)
+    
+[replica2] SELECT balance AS balance_on_replica2_after_catching_up FROM account WHERE account_number = '3010000003'; 
+     balance_on_replica2_after_catching_up 
+    ---------------------------------------
+                                 520000.00
+    (1 row)
+    
+
+======================================================================
+R5. SYNCHRONOUS REPLICATION: COMMIT waits until replica1 confirms it has the WAL
+======================================================================
+[primary] ALTER SYSTEM SET synchronous_standby_names = 'FIRST 1 (replica1)'; 
+    ALTER SYSTEM
+[primary] SELECT pg_reload_conf(); 
+     pg_reload_conf 
+    ----------------
+     t
+    (1 row)
+    
+[primary] SELECT application_name, state, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes_behind, write_lag, flush_lag, replay_lag FROM pg_stat_replication ORDER BY application_name; 
+     application_name |   state   | sync_state | bytes_behind |    write_lag    |    flush_lag    |   replay_lag    
+    ------------------+-----------+------------+--------------+-----------------+-----------------+-----------------
+     replica1         | streaming | sync       |            0 | 00:00:00.000442 | 00:00:00.001558 | 00:00:00.001894
+     replica2         | streaming | async      |            0 | 00:00:00.0007   | 00:00:00.001858 | 00:00:00.380561
+    (2 rows)
+    
+  -> replica1 is now 'sync': a commit is reported to the client only after replica1 has
+     flushed it to disk. If the primary is lost, replica1 has every confirmed transaction (RPO = 0).
+
+======================================================================
+R6. THE PRICE OF CONSISTENCY: deposit throughput, 8 clients, three commit modes
+======================================================================
+  3 rounds; within each round the modes run one after another for 6 s each, so background
+  load on the laptop affects all modes alike. The MEDIAN of the 3 rounds is reported.
+  mode                                               tps per round              median tps  median latency  vs async
+  ASYNC (no synchronous standby)                     4,323, 2,967, 2,812             2,967         2.70 ms       +0%
+  SYNC  remote flush (replica1 has it on disk)       2,152, 2,431, 2,515             2,431         3.29 ms      -18%
+  SYNC  remote apply (replica1 can already READ it)  1,932, 1,423, 1,865             1,865         4.29 ms      -37%
+  -> every synchronous commit pays an extra round trip to replica1 (and, for remote_apply,
+     waits for it to replay). Here all containers share one laptop, so the round trip is
+     tiny; between data centres it adds the network latency to EVERY commit.
+
+======================================================================
+R7. AVAILABILITY: the synchronous standby fails, and writes BLOCK
+======================================================================
+  replica1 stopped (simulated server failure)
+[primary] SELECT application_name, state, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes_behind, write_lag, flush_lag, replay_lag FROM pg_stat_replication ORDER BY application_name; 
+     application_name |   state   | sync_state | bytes_behind |    write_lag    |    flush_lag    |   replay_lag    
+    ------------------+-----------+------------+--------------+-----------------+-----------------+-----------------
+     replica2         | streaming | async      |            0 | 00:00:00.000085 | 00:00:00.000273 | 00:00:00.001436
+    (1 row)
+    
+  A client posts a deposit while the only synchronous standby is down:
+  3 seconds later the client has had no reply. What the server says that session is doing:
+[primary] SELECT pid, wait_event_type, wait_event, round(EXTRACT(EPOCH FROM now() - query_start), 1) AS seconds_waiting, left(query, 50) AS query FROM pg_stat_activity WHERE wait_event = 'SyncRep'; 
+     pid | wait_event_type | wait_event | seconds_waiting |                       query                        
+    -----+-----------------+------------+-----------------+----------------------------------------------------
+     642 | IPC             | SyncRep    |             3.0 | SELECT post_deposit('3010000005', 1000, 'REPL-0003
+    (1 row)
+    
+  statement_timeout cannot end this wait: PostgreSQL switches the timer off just before
+  COMMIT, and the wait happens INSIDE the commit. (A first version of this script relied on
+  it and waited almost 10 minutes.) An operator or watchdog has to cancel the session:
+[primary] SELECT pg_cancel_backend(pid) AS cancelled FROM pg_stat_activity WHERE wait_event = 'SyncRep'; 
+     cancelled 
+    -----------
+     t
+    (1 row)
+    
+[client] the reply the waiting client finally received:
+     post_deposit 
+    --------------
+     REPL-0003
+    (1 row)
+    
+    WARNING:  canceling wait for synchronous replication due to user request
+    DETAIL:  The transaction has already committed locally, but might not have been replicated to the standby.
+[primary] SELECT reference, status FROM bank_transaction WHERE reference = 'REPL-0003'; 
+     reference |  status   
+    -----------+-----------
+     REPL-0003 | COMPLETED
+    (1 row)
+    
+  -> CONSISTENCY was chosen over AVAILABILITY: the primary would not confirm the commit
+     without its synchronous copy. The warning matters: the deposit IS committed locally,
+     so a client that gave up cannot know whether it happened. It must check by reference
+     before retrying, which is why idempotency keys matter (Portfolio 3 D6).
+
+======================================================================
+R8. QUORUM COMMIT: ANY 1 of the two replicas is enough
+======================================================================
+[primary] ALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (replica1, replica2)'; 
+    ALTER SYSTEM
+[primary] SELECT pg_reload_conf(); 
+     pg_reload_conf 
+    ----------------
+     t
+    (1 row)
+    
+[primary] SELECT post_deposit('3010000005', 1000, 'REPL-0004') AS committed_with_replica2_ack; 
+     committed_with_replica2_ack 
+    -----------------------------
+     REPL-0004
+    (1 row)
+    
+[primary] SELECT application_name, state, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes_behind, write_lag, flush_lag, replay_lag FROM pg_stat_replication ORDER BY application_name; 
+     application_name |   state   | sync_state | bytes_behind |    write_lag    |    flush_lag    |   replay_lag    
+    ------------------+-----------+------------+--------------+-----------------+-----------------+-----------------
+     replica2         | streaming | quorum     |            0 | 00:00:00.000119 | 00:00:00.000319 | 00:00:00.000399
+    (1 row)
+    
+  -> with replica1 still down, replica2 acknowledges and writes continue: one failure is
+     tolerated without giving up durability.
+  replica1 restarted. Its replication slot kept the WAL it missed, so it catches up on its own:
+[primary] SELECT application_name, state, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes_behind, write_lag, flush_lag, replay_lag FROM pg_stat_replication ORDER BY application_name; 
+     application_name |   state   | sync_state | bytes_behind |    write_lag    |    flush_lag    |   replay_lag    
+    ------------------+-----------+------------+--------------+-----------------+-----------------+-----------------
+     replica1         | streaming | quorum     |            0 | 00:00:00.001419 | 00:00:00.00323  | 00:00:00.003286
+     replica2         | streaming | quorum     |            0 | 00:00:00.000139 | 00:00:00.000292 | 00:00:00.000375
+    (2 rows)
+    
+[replica1] SELECT reference FROM bank_transaction WHERE reference LIKE 'REPL-%' ORDER BY reference; 
+     reference 
+    -----------
+     REPL-0001
+     REPL-0002
+     REPL-0003
+     REPL-0004
+    (4 rows)
+    
