@@ -1,0 +1,238 @@
+-- run at 2026-11-04 01:04:27 WAT
+SET
+=== 1. Tables in the schema ===
+              List of relations
+ Schema |       Name       | Type  |  Owner   
+--------+------------------+-------+----------
+ public | account          | table | owotrust
+ public | account_holder   | table | owotrust
+ public | account_type     | table | owotrust
+ public | bank_transaction | table | owotrust
+ public | branch           | table | owotrust
+ public | customer         | table | owotrust
+ public | employee         | table | owotrust
+ public | kyc_tier         | table | owotrust
+(8 rows)
+
+=== 2. Row counts ===
+    table_name    | rows 
+------------------+------
+ kyc_tier         |    3
+ branch           |    5
+ employee         |   11
+ customer         |   15
+ account_type     |    3
+ account          |   20
+ account_holder   |   21
+ bank_transaction |   52
+(8 rows)
+
+=== 3. Table definitions with keys and constraints ===
+                                      Table "public.account"
+     Column      |           Type           | Collation | Nullable |           Default            
+-----------------+--------------------------+-----------+----------+------------------------------
+ account_id      | integer                  |           | not null | generated always as identity
+ account_number  | character(10)            |           | not null | 
+ type_code       | character varying(10)    |           | not null | 
+ branch_id       | integer                  |           | not null | 
+ opened_by       | integer                  |           |          | 
+ balance         | numeric(18,2)            |           | not null | 0
+ overdraft_limit | numeric(18,2)            |           | not null | 0
+ status          | character varying(10)    |           | not null | 'ACTIVE'::character varying
+ opened_at       | timestamp with time zone |           | not null | now()
+ closed_at       | timestamp with time zone |           |          | 
+Indexes:
+    "account_pkey" PRIMARY KEY, btree (account_id)
+    "account_account_number_key" UNIQUE CONSTRAINT, btree (account_number)
+Check constraints:
+    "account_account_number_check" CHECK (account_number ~ '^[0-9]{10}$'::text)
+    "account_overdraft_limit_check" CHECK (overdraft_limit >= 0::numeric)
+    "account_status_check" CHECK (status::text = ANY (ARRAY['ACTIVE'::character varying, 'DORMANT'::character varying, 'FROZEN'::character varying, 'CLOSED'::character varying]::text[]))
+    "chk_account_balance_floor" CHECK (balance >= (- overdraft_limit))
+    "chk_account_close_order" CHECK (closed_at IS NULL OR closed_at >= opened_at)
+    "chk_account_closed_state" CHECK ((status::text = 'CLOSED'::text) = (closed_at IS NOT NULL))
+Foreign-key constraints:
+    "account_branch_id_fkey" FOREIGN KEY (branch_id) REFERENCES branch(branch_id)
+    "account_opened_by_fkey" FOREIGN KEY (opened_by) REFERENCES employee(employee_id)
+    "account_type_code_fkey" FOREIGN KEY (type_code) REFERENCES account_type(type_code)
+Referenced by:
+    TABLE "account_holder" CONSTRAINT "account_holder_account_id_fkey" FOREIGN KEY (account_id) REFERENCES account(account_id)
+    TABLE "bank_transaction" CONSTRAINT "bank_transaction_credit_account_id_fkey" FOREIGN KEY (credit_account_id) REFERENCES account(account_id)
+    TABLE "bank_transaction" CONSTRAINT "bank_transaction_debit_account_id_fkey" FOREIGN KEY (debit_account_id) REFERENCES account(account_id)
+
+                                Table "public.account_holder"
+   Column    |           Type           | Collation | Nullable |           Default            
+-------------+--------------------------+-----------+----------+------------------------------
+ account_id  | integer                  |           | not null | 
+ customer_id | integer                  |           | not null | 
+ holder_role | character varying(10)    |           | not null | 'PRIMARY'::character varying
+ added_at    | timestamp with time zone |           | not null | now()
+Indexes:
+    "account_holder_pkey" PRIMARY KEY, btree (account_id, customer_id)
+    "uq_account_single_primary_holder" UNIQUE, btree (account_id) WHERE holder_role::text = 'PRIMARY'::text
+Check constraints:
+    "account_holder_holder_role_check" CHECK (holder_role::text = ANY (ARRAY['PRIMARY'::character varying, 'JOINT'::character varying]::text[]))
+Foreign-key constraints:
+    "account_holder_account_id_fkey" FOREIGN KEY (account_id) REFERENCES account(account_id)
+    "account_holder_customer_id_fkey" FOREIGN KEY (customer_id) REFERENCES customer(customer_id)
+
+                                  Table "public.bank_transaction"
+      Column       |           Type           | Collation | Nullable |           Default            
+-------------------+--------------------------+-----------+----------+------------------------------
+ txn_id            | bigint                   |           | not null | generated always as identity
+ reference         | character varying(20)    |           | not null | 
+ txn_type          | character varying(10)    |           | not null | 
+ channel           | character varying(10)    |           | not null | 
+ debit_account_id  | integer                  |           |          | 
+ credit_account_id | integer                  |           |          | 
+ amount            | numeric(18,2)            |           | not null | 
+ status            | character varying(10)    |           | not null | 'PENDING'::character varying
+ narration         | character varying(140)   |           |          | 
+ initiated_by      | integer                  |           |          | 
+ reverses_txn_id   | bigint                   |           |          | 
+ failure_reason    | character varying(200)   |           |          | 
+ created_at        | timestamp with time zone |           | not null | now()
+ completed_at      | timestamp with time zone |           |          | 
+Indexes:
+    "bank_transaction_pkey" PRIMARY KEY, btree (txn_id)
+    "bank_transaction_reference_key" UNIQUE CONSTRAINT, btree (reference)
+    "bank_transaction_reverses_txn_id_key" UNIQUE CONSTRAINT, btree (reverses_txn_id)
+Check constraints:
+    "bank_transaction_amount_check" CHECK (amount > 0::numeric)
+    "bank_transaction_channel_check" CHECK (channel::text = ANY (ARRAY['BRANCH'::character varying, 'MOBILE'::character varying, 'WEB'::character varying, 'USSD'::character varying, 'ATM'::character varying, 'POS'::character varying, 'SYSTEM'::character varying]::text[]))
+    "bank_transaction_status_check" CHECK (status::text = ANY (ARRAY['PENDING'::character varying, 'COMPLETED'::character varying, 'FAILED'::character varying, 'REVERSED'::character varying]::text[]))
+    "bank_transaction_txn_type_check" CHECK (txn_type::text = ANY (ARRAY['DEPOSIT'::character varying, 'WITHDRAWAL'::character varying, 'TRANSFER'::character varying, 'REVERSAL'::character varying, 'FEE'::character varying]::text[]))
+    "chk_txn_branch_teller" CHECK (channel::text <> 'BRANCH'::text OR initiated_by IS NOT NULL)
+    "chk_txn_completed_at" CHECK ((status::text = ANY (ARRAY['COMPLETED'::character varying, 'REVERSED'::character varying]::text[])) = (completed_at IS NOT NULL))
+    "chk_txn_completed_order" CHECK (completed_at IS NULL OR completed_at >= created_at)
+    "chk_txn_distinct_accounts" CHECK (debit_account_id <> credit_account_id)
+    "chk_txn_failure_reason" CHECK (status::text <> 'FAILED'::text OR failure_reason IS NOT NULL)
+    "chk_txn_legs" CHECK (txn_type::text = 'DEPOSIT'::text AND debit_account_id IS NULL AND credit_account_id IS NOT NULL OR (txn_type::text = ANY (ARRAY['WITHDRAWAL'::character varying, 'FEE'::character varying]::text[])) AND debit_account_id IS NOT NULL AND credit_account_id IS NULL OR txn_type::text = 'TRANSFER'::text AND debit_account_id IS NOT NULL AND credit_account_id IS NOT NULL OR txn_type::text = 'REVERSAL'::text AND COALESCE(debit_account_id, credit_account_id) IS NOT NULL)
+    "chk_txn_reversal_link" CHECK ((txn_type::text = 'REVERSAL'::text) = (reverses_txn_id IS NOT NULL))
+Foreign-key constraints:
+    "bank_transaction_credit_account_id_fkey" FOREIGN KEY (credit_account_id) REFERENCES account(account_id)
+    "bank_transaction_debit_account_id_fkey" FOREIGN KEY (debit_account_id) REFERENCES account(account_id)
+    "bank_transaction_initiated_by_fkey" FOREIGN KEY (initiated_by) REFERENCES employee(employee_id)
+    "bank_transaction_reverses_txn_id_fkey" FOREIGN KEY (reverses_txn_id) REFERENCES bank_transaction(txn_id)
+Referenced by:
+    TABLE "bank_transaction" CONSTRAINT "bank_transaction_reverses_txn_id_fkey" FOREIGN KEY (reverses_txn_id) REFERENCES bank_transaction(txn_id)
+
+=== 4. All declared constraints (PK, UNIQUE, FK, CHECK) ===
+    table_name    |             constraint_name             |    type     
+------------------+-----------------------------------------+-------------
+ account          | account_account_number_check            | CHECK
+ account          | account_overdraft_limit_check           | CHECK
+ account          | account_status_check                    | CHECK
+ account          | chk_account_balance_floor               | CHECK
+ account          | chk_account_close_order                 | CHECK
+ account          | chk_account_closed_state                | CHECK
+ account          | account_branch_id_fkey                  | FOREIGN KEY
+ account          | account_opened_by_fkey                  | FOREIGN KEY
+ account          | account_type_code_fkey                  | FOREIGN KEY
+ account          | account_pkey                            | PRIMARY KEY
+ account          | account_account_number_key              | UNIQUE
+ account_holder   | account_holder_holder_role_check        | CHECK
+ account_holder   | account_holder_account_id_fkey          | FOREIGN KEY
+ account_holder   | account_holder_customer_id_fkey         | FOREIGN KEY
+ account_holder   | account_holder_pkey                     | PRIMARY KEY
+ account_type     | account_type_annual_interest_rate_check | CHECK
+ account_type     | account_type_currency_check             | CHECK
+ account_type     | account_type_minimum_balance_check      | CHECK
+ account_type     | account_type_pkey                       | PRIMARY KEY
+ account_type     | account_type_type_name_key              | UNIQUE
+ bank_transaction | bank_transaction_amount_check           | CHECK
+ bank_transaction | bank_transaction_channel_check          | CHECK
+ bank_transaction | bank_transaction_status_check           | CHECK
+ bank_transaction | bank_transaction_txn_type_check         | CHECK
+ bank_transaction | chk_txn_branch_teller                   | CHECK
+ bank_transaction | chk_txn_completed_at                    | CHECK
+ bank_transaction | chk_txn_completed_order                 | CHECK
+ bank_transaction | chk_txn_distinct_accounts               | CHECK
+ bank_transaction | chk_txn_failure_reason                  | CHECK
+ bank_transaction | chk_txn_legs                            | CHECK
+ bank_transaction | chk_txn_reversal_link                   | CHECK
+ bank_transaction | bank_transaction_credit_account_id_fkey | FOREIGN KEY
+ bank_transaction | bank_transaction_debit_account_id_fkey  | FOREIGN KEY
+ bank_transaction | bank_transaction_initiated_by_fkey      | FOREIGN KEY
+ bank_transaction | bank_transaction_reverses_txn_id_fkey   | FOREIGN KEY
+ bank_transaction | bank_transaction_pkey                   | PRIMARY KEY
+ bank_transaction | bank_transaction_reference_key          | UNIQUE
+ bank_transaction | bank_transaction_reverses_txn_id_key    | UNIQUE
+ branch           | branch_branch_code_check                | CHECK
+ branch           | branch_pkey                             | PRIMARY KEY
+ branch           | branch_branch_code_key                  | UNIQUE
+ customer         | customer_bvn_check                      | CHECK
+ customer         | customer_date_of_birth_check            | CHECK
+ customer         | customer_email_check                    | CHECK
+ customer         | customer_phone_check                    | CHECK
+ customer         | customer_status_check                   | CHECK
+ customer         | customer_kyc_tier_fkey                  | FOREIGN KEY
+ customer         | customer_pkey                           | PRIMARY KEY
+ customer         | customer_bvn_key                        | UNIQUE
+ customer         | customer_email_key                      | UNIQUE
+ customer         | customer_phone_key                      | UNIQUE
+ employee         | employee_role_check                     | CHECK
+ employee         | employee_staff_number_check             | CHECK
+ employee         | employee_branch_id_fkey                 | FOREIGN KEY
+ employee         | employee_pkey                           | PRIMARY KEY
+ employee         | employee_email_key                      | UNIQUE
+ employee         | employee_staff_number_key               | UNIQUE
+ kyc_tier         | kyc_tier_daily_debit_limit_check        | CHECK
+ kyc_tier         | kyc_tier_max_balance_check              | CHECK
+ kyc_tier         | kyc_tier_tier_level_check               | CHECK
+ kyc_tier         | kyc_tier_pkey                           | PRIMARY KEY
+(61 rows)
+
+=== 5. Balance audit: stored balance vs balance derived from posted transactions ===
+    (any row returned here would indicate an inconsistency)
+ account_number | stored_balance | derived_balance 
+----------------+----------------+-----------------
+(0 rows)
+
+=== 6. Customer portfolio view (joins across 5 tables) ===
+      customer      | kyc_tier | account_number |         type_name         | currency | holder_role |    branch_name    | status |  balance   
+--------------------+----------+----------------+---------------------------+----------+-------------+-------------------+--------+------------
+ Adaeze Okonkwo     |        3 | 3010000001     | Savings Account           | NGN      | PRIMARY     | Lagos Island Main | ACTIVE |  450000.00
+ Adaeze Okonkwo     |        3 | 3010000002     | Current Account           | NGN      | PRIMARY     | Lagos Island Main | ACTIVE |  249900.00
+ Babatunde Ogundipe |        3 | 3010000003     | Savings Account           | NGN      | PRIMARY     | Lagos Island Main | ACTIVE |  450000.00
+ Babatunde Ogundipe |        3 | 3010000004     | Current Account           | NGN      | PRIMARY     | Lagos Island Main | ACTIVE | 2349900.00
+ Chiamaka Obi       |        2 | 3010000005     | Savings Account           | NGN      | PRIMARY     | Ikeja             | ACTIVE |  205000.00
+ Chiamaka Obi       |        2 | 3010000020     | Savings Account           | NGN      | PRIMARY     | Ikeja             | CLOSED |       0.00
+ Damilola Ogunleye  |        1 | 3010000006     | Savings Account           | NGN      | PRIMARY     | Ikeja             | ACTIVE |   77000.00
+ Emmanuel Okoro     |        3 | 3010000007     | Savings Account           | NGN      | PRIMARY     | Abuja Central     | ACTIVE |  655000.00
+ Emmanuel Okoro     |        3 | 3010000008     | Domiciliary Account (USD) | USD      | PRIMARY     | Abuja Central     | ACTIVE |    3000.00
+ Fatima Abdullahi   |        2 | 3010000009     | Savings Account           | NGN      | PRIMARY     | Abuja Central     | ACTIVE |  175000.00
+ Gbenga Ajayi       |        2 | 3010000010     | Savings Account           | NGN      | PRIMARY     | Ibadan Ring Road  | ACTIVE |  265000.00
+ Halima Sani        |        1 | 3010000011     | Savings Account           | NGN      | PRIMARY     | Abuja Central     | ACTIVE |   38000.00
+ Ifeanyi Uche       |        3 | 3010000012     | Savings Account           | NGN      | PRIMARY     | Port Harcourt GRA | ACTIVE | 1200000.00
+ Ifeanyi Uche       |        3 | 3010000013     | Domiciliary Account (USD) | USD      | PRIMARY     | Port Harcourt GRA | ACTIVE |    3500.00
+ Jumoke Adebayo     |        2 | 3010000014     | Savings Account           | NGN      | PRIMARY     | Ibadan Ring Road  | ACTIVE |  126500.00
+ Kelechi Nnamdi     |        3 | 3010000015     | Current Account           | NGN      | PRIMARY     | Port Harcourt GRA | ACTIVE | 2749900.00
+ Lola Bankole       |        1 | 3010000016     | Savings Account           | NGN      | PRIMARY     | Ikeja             | FROZEN |   60000.00
+ Musa Danjuma       |        2 | 3010000017     | Savings Account           | NGN      | PRIMARY     | Abuja Central     | ACTIVE |  165000.00
+ Nkechi Ibe         |        3 | 3010000004     | Current Account           | NGN      | JOINT       | Lagos Island Main | ACTIVE | 2349900.00
+ Nkechi Ibe         |        3 | 3010000018     | Savings Account           | NGN      | PRIMARY     | Lagos Island Main | ACTIVE |  750000.00
+ Oluwaseun Akande   |        3 | 3010000019     | Savings Account           | NGN      | PRIMARY     | Lagos Island Main | ACTIVE | 1450000.00
+(21 rows)
+
+=== 7. Transaction status summary (per currency - NGN and USD must not be added together) ===
+  txn_type  |  status   | currency | txns | total_amount 
+------------+-----------+----------+------+--------------
+ DEPOSIT    | COMPLETED | NGN      |   20 |  11615000.00
+ DEPOSIT    | COMPLETED | USD      |    2 |      6500.00
+ FEE        | COMPLETED | NGN      |    6 |       300.00
+ REVERSAL   | COMPLETED | NGN      |    1 |     75000.00
+ TRANSFER   | COMPLETED | NGN      |   13 |   2382000.00
+ TRANSFER   | COMPLETED | USD      |    1 |       500.00
+ TRANSFER   | FAILED    | NGN      |    2 |    510000.00
+ TRANSFER   | PENDING   | NGN      |    1 |     30000.00
+ TRANSFER   | REVERSED  | NGN      |    1 |     75000.00
+ WITHDRAWAL | COMPLETED | NGN      |    5 |    198500.00
+(10 rows)
+
+=== 8. Reversal pair ===
+ reversal_ref  | original_ref  | original_status |  amount  |                   narration                   
+---------------+---------------+-----------------+----------+-----------------------------------------------
+ OTB2609280052 | OTB2609280033 | REVERSED        | 75000.00 | Reversal of OTB2609280033 (wrong beneficiary)
+(1 row)
+

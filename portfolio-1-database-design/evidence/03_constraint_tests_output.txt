@@ -1,0 +1,66 @@
+-- run at 2026-11-04 01:04:27 WAT
+BEGIN
+--- T01 Duplicate BVN (candidate key)                -> expect unique_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:20: ERROR:  duplicate key value violates unique constraint "customer_bvn_key"
+DETAIL:  Key (bvn)=(22100000001) already exists.
+--- T02 BVN must be exactly 11 digits                 -> expect check_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:24: ERROR:  new row for relation "customer" violates check constraint "customer_bvn_check"
+DETAIL:  Failing row contains (17, 2210000    , Short, Bvn, null, +2348099999998, 1990-01-01, null, null, null, 1, ACTIVE, 2026-11-04 01:04:27.369848+01).
+--- T03 Phone must be +234 followed by 10 digits      -> expect check_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:28: ERROR:  new row for relation "customer" violates check constraint "customer_phone_check"
+DETAIL:  Failing row contains (18, 22199999999, Bad, Phone, null, 08031234567, 1990-01-01, null, null, null, 1, ACTIVE, 2026-11-04 01:04:27.369848+01).
+--- T04 Unknown KYC tier (foreign key)                -> expect foreign_key_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:32: ERROR:  insert or update on table "customer" violates foreign key constraint "customer_kyc_tier_fkey"
+DETAIL:  Key (kyc_tier)=(4) is not present in table "kyc_tier".
+--- T05 Account with an unknown product type (FK)     -> expect foreign_key_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:36: ERROR:  insert or update on table "account" violates foreign key constraint "account_type_code_fkey"
+DETAIL:  Key (type_code)=(GOLD_NGN) is not present in table "account_type".
+--- T06 Savings balance below zero (no overdraft)     -> expect check_violation chk_account_balance_floor
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:39: ERROR:  new row for relation "account" violates check constraint "chk_account_balance_floor"
+DETAIL:  Failing row contains (1, 3010000001, SAV_NGN, 1, 2, -1.00, 0.00, ACTIVE, 2026-08-20 10:00:00+01, null).
+--- T07 Current account beyond its overdraft limit    -> expect check_violation chk_account_balance_floor
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:42: ERROR:  new row for relation "account" violates check constraint "chk_account_balance_floor"
+DETAIL:  Failing row contains (2, 3010000002, CUR_NGN, 1, 1, -100000.01, 100000.00, ACTIVE, 2026-08-20 10:30:00+01, null).
+--- T08 CLOSED account without closed_at              -> expect check_violation chk_account_closed_state
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:45: ERROR:  new row for relation "account" violates check constraint "chk_account_closed_state"
+DETAIL:  Failing row contains (1, 3010000001, SAV_NGN, 1, 2, 450000.00, 0.00, CLOSED, 2026-08-20 10:00:00+01, null).
+--- T09 Second PRIMARY holder on the same account     -> expect unique_violation uq_account_single_primary_holder
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:51: ERROR:  duplicate key value violates unique constraint "uq_account_single_primary_holder"
+DETAIL:  Key (account_id)=(4) already exists.
+--- T10 Transfer to the same account                  -> expect check_violation chk_txn_distinct_accounts
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:55: ERROR:  new row for relation "bank_transaction" violates check constraint "chk_txn_distinct_accounts"
+DETAIL:  Failing row contains (53, TEST0010, TRANSFER, MOBILE, 1, 1, 1000.00, PENDING, null, null, null, null, 2026-11-04 01:04:27.369848+01, null).
+--- T11 DEPOSIT that also debits an account          -> expect check_violation chk_txn_legs
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:59: ERROR:  new row for relation "bank_transaction" violates check constraint "chk_txn_legs"
+DETAIL:  Failing row contains (54, TEST0011, DEPOSIT, MOBILE, 2, 1, 1000.00, PENDING, null, null, null, null, 2026-11-04 01:04:27.369848+01, null).
+--- T12 Zero / negative amount                        -> expect check_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:63: ERROR:  new row for relation "bank_transaction" violates check constraint "bank_transaction_amount_check"
+DETAIL:  Failing row contains (55, TEST0012, DEPOSIT, MOBILE, null, 1, -500.00, PENDING, null, null, null, null, 2026-11-04 01:04:27.369848+01, null).
+--- T13 REVERSAL that does not say what it reverses   -> expect check_violation chk_txn_reversal_link
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:67: ERROR:  new row for relation "bank_transaction" violates check constraint "chk_txn_reversal_link"
+DETAIL:  Failing row contains (56, TEST0013, REVERSAL, SYSTEM, 1, 2, 1000.00, PENDING, null, null, null, null, 2026-11-04 01:04:27.369848+01, null).
+--- T14 Reversing the same transaction twice          -> expect unique_violation on reverses_txn_id
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:74: ERROR:  duplicate key value violates unique constraint "bank_transaction_reverses_txn_id_key"
+DETAIL:  Key (reverses_txn_id)=(33) already exists.
+--- T15 FAILED transaction with no failure_reason     -> expect check_violation chk_txn_failure_reason
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:78: ERROR:  new row for relation "bank_transaction" violates check constraint "chk_txn_failure_reason"
+DETAIL:  Failing row contains (58, TEST0015, DEPOSIT, MOBILE, null, 1, 1000.00, FAILED, null, null, null, null, 2026-11-04 01:04:27.369848+01, null).
+--- T16 COMPLETED transaction with no completed_at    -> expect check_violation chk_txn_completed_at
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:82: ERROR:  new row for relation "bank_transaction" violates check constraint "chk_txn_completed_at"
+DETAIL:  Failing row contains (59, TEST0016, DEPOSIT, MOBILE, null, 1, 1000.00, COMPLETED, null, null, null, null, 2026-11-04 01:04:27.369848+01, null).
+--- T17 Branch (over-the-counter) txn with no teller  -> expect check_violation chk_txn_branch_teller
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:86: ERROR:  new row for relation "bank_transaction" violates check constraint "chk_txn_branch_teller"
+DETAIL:  Failing row contains (60, TEST0017, DEPOSIT, BRANCH, null, 1, 1000.00, PENDING, null, null, null, null, 2026-11-04 01:04:27.369848+01, null).
+--- T18 Duplicate transaction reference (idempotency) -> expect unique_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:90: ERROR:  duplicate key value violates unique constraint "bank_transaction_reference_key"
+DETAIL:  Key (reference)=(OTB2609010002) already exists.
+--- T19 Delete a customer who still holds accounts    -> expect foreign_key_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:93: ERROR:  update or delete on table "customer" violates foreign key constraint "account_holder_customer_id_fkey" on table "account_holder"
+DETAIL:  Key (customer_id)=(1) is still referenced from table "account_holder".
+--- T20 Delete an account still referenced by holders/transactions -> expect foreign_key_violation
+psql:/portfolio/portfolio-1-database-design/sql/03_constraint_tests.sql:96: ERROR:  update or delete on table "account" violates foreign key constraint "account_holder_account_id_fkey" on table "account_holder"
+DETAIL:  Key (account_id)=(20) is still referenced from table "account_holder".
+--- T21 VALID pending transfer                        -> expect INSERT 0 1 (success)
+INSERT 0 1
+ROLLBACK
+--- All changes rolled back; seed data unchanged.

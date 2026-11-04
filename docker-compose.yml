@@ -1,0 +1,26 @@
+# Local PostgreSQL instance used by Portfolios 1-3.
+# Start:  docker compose up -d
+# Stop:   docker compose down        (add -v to wipe the data volume)
+services:
+  postgres:
+    image: postgres:16
+    container_name: owotrust-pg
+    environment:
+      POSTGRES_USER: owotrust
+      POSTGRES_PASSWORD: owotrust_dev   # local development only
+      POSTGRES_DB: owotrust_bank
+      TZ: Africa/Lagos
+      PGTZ: Africa/Lagos
+    ports:
+      - "5433:5432"                     # 5433 on the host to avoid clashing with any local Postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./:/portfolio:ro                # repo mounted read-only so psql can run the scripts with -f
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U owotrust -d owotrust_bank"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
