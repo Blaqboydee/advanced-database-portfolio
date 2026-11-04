@@ -1,14 +1,14 @@
 # Advanced Database Systems Portfolio – OwoTrust Digital Bank
 
-**Course:** MIT 8103 Advanced Database Systems, MIVA Open University (2026/2027, First Semester CA)
-**Student:** Adeoluwa Adegoke
-**Matric No:** _<fill in>_
+- **Course:** MIT 8103 Advanced Database Systems, MIVA Open University (2026/2027, First Semester CA)
+- **Student:** Adeoluwa Adegoke
+- **Matric No:** _<fill in>_
 
 ---
 
 ## Selected case study
 
-| | |
+| Item | Details |
 |---|---|
 | **Organisation** | **OwoTrust Digital Bank**: a *simulated* Nigerian retail bank and fintech platform. The name and all data are fictional. |
 | **Nature of the business** | Retail banking through five physical branches (Lagos Island, Ikeja, Abuja, Ibadan and Port Harcourt) plus a mobile app. It offers naira savings and current accounts and USD domiciliary accounts. Money moves through branch, mobile, web, USSD, ATM and POS channels. |
@@ -17,6 +17,8 @@
 | **Key operations** | Open an account, deposit, withdraw, transfer funds, reverse a failed or mistaken transaction, charge fees, produce an account statement, and audit account balances against transaction history |
 
 The same case study is used in all five portfolio activities.
+
+**ER diagram:** see [Portfolio 1, section 2](portfolio-1-database-design/README.md#2-er-diagram).
 
 ---
 

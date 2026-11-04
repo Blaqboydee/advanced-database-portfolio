@@ -1,7 +1,7 @@
 # Portfolio 1 – Database Design and Modelling
 
-**Case study:** OwoTrust Digital Bank (simulated Nigerian retail bank / fintech)
-**DBMS:** PostgreSQL 16 (Docker)
+- **Case study:** OwoTrust Digital Bank (simulated Nigerian retail bank / fintech)
+- **DBMS:** PostgreSQL 16 (Docker)
 
 | File | Purpose |
 |---|---|
