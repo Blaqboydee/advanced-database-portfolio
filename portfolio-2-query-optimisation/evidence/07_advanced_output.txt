@@ -1,0 +1,339 @@
+-- run at 2026-11-04 03:19:03 WAT
+SET
+SET
+
+====================================================================
+A. PLANNER STATISTICS (collected by ANALYZE, stored in pg_stats)
+====================================================================
+n_distinct = estimated number of distinct debit accounts.
+most_common_vals/freqs = the busiest accounts and their share of rows.
+correlation = how closely the physical row order follows the column order (1 = perfectly).
+     attname      | n_distinct |             top5_values             |                          top5_share_of_rows                          | physical_order_correlation 
+------------------+------------+-------------------------------------+----------------------------------------------------------------------+----------------------------
+ created_at       |         -1 |                                     |                                                                      |                      1.000
+ debit_account_id |      38915 | {21,24,23,22,26}                    | {0.0030666667,0.0013666666,0.0010333334,0.00093333336,0.00083333335} |                     -0.004
+ amount           |      11463 | {50.00,110.00,130.00,120.00,140.00} | {0.027833333,0.011366666,0.009633333,0.0091,0.0088}                  |                     -0.133
+(3 rows)
+
+
+Extended (expression) statistics created in 03_indexes.sql: the planner now
+knows the month expression has only a few hundred distinct values.
+   statistics_name    |                                   expr                                    | n_distinct 
+----------------------+---------------------------------------------------------------------------+------------
+ st_txn_month_channel | date_trunc('month'::text, (created_at AT TIME ZONE 'Africa/Lagos'::text)) |         23
+(1 row)
+
+
+A1. Account id taken from a CTE (unknown when the plan is made):
+    the planner assumes an AVERAGE account (~19 rows) and chooses bitmap scan + sort.
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=87.91..87.95 rows=18 width=27) (actual time=33.685..33.688 rows=20 loops=1)
+   Buffers: shared hit=1418 read=1423
+   ->  Sort  (cost=87.91..87.95 rows=18 width=27) (actual time=33.684..33.685 rows=20 loops=1)
+         Sort Key: t.created_at DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=1418 read=1423
+         ->  Nested Loop  (cost=4.99..87.53 rows=18 width=27) (actual time=0.678..33.266 rows=3074 loops=1)
+               Buffers: shared hit=1415 read=1423
+               ->  Index Scan using account_account_number_key on account  (cost=0.41..8.43 rows=1 width=4) (actual time=0.075..0.078 rows=1 loops=1)
+                     Index Cond: (account_number = '3100000001'::bpchar)
+                     Buffers: shared hit=1 read=3
+               ->  Bitmap Heap Scan on bank_transaction t  (cost=4.57..78.91 rows=19 width=31) (actual time=0.598..32.810 rows=3074 loops=1)
+                     Recheck Cond: (account.account_id = debit_account_id)
+                     Heap Blocks: exact=2820
+                     Buffers: shared hit=1414 read=1420
+                     ->  Bitmap Index Scan on ix_txn_debit_acct_created  (cost=0.00..4.57 rows=19 width=0) (actual time=0.374..0.374 rows=3074 loops=1)
+                           Index Cond: (debit_account_id = account.account_id)
+                           Buffers: shared hit=3 read=11
+ Planning:
+   Buffers: shared hit=357 read=2
+ Planning Time: 0.679 ms
+ Execution Time: 33.704 ms
+(22 rows)
+
+
+A2. Same query with the account id as a value (21):
+    the planner finds 21 in most_common_vals (see its share above), so it expects
+    thousands of rows, walks the index backwards and stops after 20 entries.
+                                                                              QUERY PLAN                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..74.16 rows=20 width=27) (actual time=0.007..0.012 rows=20 loops=1)
+   Buffers: shared hit=20
+   ->  Index Scan Backward using ix_txn_debit_acct_created on bank_transaction t  (cost=0.43..11985.22 rows=3251 width=27) (actual time=0.006..0.011 rows=20 loops=1)
+         Index Cond: (debit_account_id = 21)
+         Buffers: shared hit=20
+ Planning Time: 0.064 ms
+ Execution Time: 0.017 ms
+(7 rows)
+
+
+====================================================================
+B. CORRECTNESS: NOT IN vs NOT EXISTS
+====================================================================
+Question: how many accounts received NO money in the last week (since 25 Oct 2026)?
+credit_account_id is NULL for withdrawals and fees, so the subquery contains NULLs.
+
+B1. NOT IN: WRONG answer (0). "x NOT IN (..., NULL)" is never TRUE, only FALSE or UNKNOWN.
+ accounts_without_credits_not_in 
+---------------------------------
+                               0
+(1 row)
+
+B2. NOT EXISTS: CORRECT answer, NULLs cannot match a join condition.
+ accounts_without_credits_not_exists 
+-------------------------------------
+                               50164
+(1 row)
+
+B3. NOT IN can be repaired by excluding NULLs; it now agrees with B2.
+ accounts_without_credits_not_in_fixed 
+---------------------------------------
+                                 50164
+(1 row)
+
+
+B4. Plans: NOT EXISTS becomes an anti-join; NOT IN becomes a hashed subplan filter.
+    If the subquery result did not fit in work_mem, NOT IN would fall back to
+    re-scanning the subquery result for every account (quadratic time).
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Hash Right Anti Join
+         Hash Cond: (t.credit_account_id = a.account_id)
+         ->  Bitmap Heap Scan on bank_transaction t
+               Recheck Cond: (created_at >= '2026-10-25 00:00:00+01'::timestamp with time zone)
+               ->  Bitmap Index Scan on brin_txn_created_at
+                     Index Cond: (created_at >= '2026-10-25 00:00:00+01'::timestamp with time zone)
+         ->  Hash
+               ->  Seq Scan on account a
+(9 rows)
+
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Seq Scan on account a
+         Filter: (NOT (hashed SubPlan 1))
+         SubPlan 1
+           ->  Bitmap Heap Scan on bank_transaction t
+                 Recheck Cond: (created_at >= '2026-10-25 00:00:00+01'::timestamp with time zone)
+                 Filter: (credit_account_id IS NOT NULL)
+                 ->  Bitmap Index Scan on brin_txn_created_at
+                       Index Cond: (created_at >= '2026-10-25 00:00:00+01'::timestamp with time zone)
+(9 rows)
+
+
+====================================================================
+C. MEMORY: work_mem (default 4MB) and the disk spills in Q6 / Q7
+====================================================================
+TIMING OFF is used so that per-node timing overhead does not distort the totals.
+
+C1. Q7 with the default work_mem: the sort spills to disk ("external merge").
+ work_mem 
+----------
+ 4MB
+(1 row)
+
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=94935.12..110603.31 rows=522273 width=78) (actual rows=70 loops=1)
+   Group Key: (to_char(date_trunc('month'::text, created_at), 'YYYY-MM'::text)), channel
+   Buffers: shared hit=3866 read=4914, temp read=1920 written=1929
+   ->  Sort  (cost=94935.12..96240.80 rows=522273 width=43) (actual rows=521437 loops=1)
+         Sort Key: (to_char(date_trunc('month'::text, created_at), 'YYYY-MM'::text)), channel
+         Sort Method: external merge  Disk: 15360kB
+         Buffers: shared hit=3866 read=4914, temp read=1920 written=1929
+         ->  Bitmap Heap Scan on bank_transaction  (cost=144.74..29265.19 rows=522273 width=43) (actual rows=521437 loops=1)
+               Recheck Cond: ((created_at >= '2026-01-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+               Rows Removed by Index Recheck: 12534
+               Filter: ((status)::text = 'COMPLETED'::text)
+               Rows Removed by Filter: 10438
+               Heap Blocks: lossy=8772
+               Buffers: shared hit=3863 read=4914
+               ->  Bitmap Index Scan on brin_txn_created_at  (cost=0.00..14.18 rows=538119 width=0) (actual rows=87720 loops=1)
+                     Index Cond: ((created_at >= '2026-01-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                     Buffers: shared hit=5
+ Planning:
+   Buffers: shared hit=30
+ Planning Time: 0.073 ms
+ JIT:
+   Functions: 11
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+ Execution Time: 367.277 ms
+(24 rows)
+
+
+C2. Q7 with work_mem = 64MB for this transaction only (SET LOCAL):
+    the sort now fits in memory ("quicksort"). The plan is still sort-based,
+    because the planner estimates ~520,000 groups (actual: 70). That
+    misestimate, not memory, is the real problem; see Q7b and the extended
+    statistics in 03_indexes.sql.
+BEGIN
+SET
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=78866.62..94534.81 rows=522273 width=78) (actual rows=70 loops=1)
+   Group Key: (to_char(date_trunc('month'::text, created_at), 'YYYY-MM'::text)), channel
+   Buffers: shared hit=8774
+   ->  Sort  (cost=78866.62..80172.30 rows=522273 width=43) (actual rows=521437 loops=1)
+         Sort Key: (to_char(date_trunc('month'::text, created_at), 'YYYY-MM'::text)), channel
+         Sort Method: quicksort  Memory: 36731kB
+         Buffers: shared hit=8774
+         ->  Bitmap Heap Scan on bank_transaction  (cost=144.74..29265.19 rows=522273 width=43) (actual rows=521437 loops=1)
+               Recheck Cond: ((created_at >= '2026-01-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+               Rows Removed by Index Recheck: 12534
+               Filter: ((status)::text = 'COMPLETED'::text)
+               Rows Removed by Filter: 10438
+               Heap Blocks: lossy=8772
+               Buffers: shared hit=8774
+               ->  Bitmap Index Scan on brin_txn_created_at  (cost=0.00..14.18 rows=538119 width=0) (actual rows=87720 loops=1)
+                     Index Cond: ((created_at >= '2026-01-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                     Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=1
+ Planning Time: 0.079 ms
+ Execution Time: 239.785 ms
+(21 rows)
+
+COMMIT
+
+C3. Q6 with the default work_mem and then with 64MB. Look at the HashAggregate
+    line ("Batches", "Disk Usage") and the Execution Time of each.
+                                                                                          QUERY PLAN                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=32936.28..32936.31 rows=10 width=88) (actual rows=10 loops=1)
+   Buffers: shared hit=2889 read=1308 written=4, temp read=164 written=326
+   ->  Sort  (cost=32936.28..33061.32 rows=50015 width=88) (actual rows=10 loops=1)
+         Sort Key: (sum(t.amount)) DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=2889 read=1308 written=4, temp read=164 written=326
+         ->  HashAggregate  (cost=30255.09..31855.48 rows=50015 width=88) (actual rows=36630 loops=1)
+               Group Key: c.customer_id
+               Planned Partitions: 4  Batches: 5  Memory Usage: 8241kB  Disk Usage: 1664kB
+               Buffers: shared hit=2886 read=1308 written=4, temp read=164 written=326
+               ->  Hash Join  (cost=3968.50..25652.99 rows=61877 width=21) (actual rows=91812 loops=1)
+                     Hash Cond: (ah.customer_id = c.customer_id)
+                     Buffers: shared hit=2886 read=1308 written=4
+                     ->  Hash Join  (cost=1918.16..23440.21 rows=61877 width=9) (actual rows=91812 loops=1)
+                           Hash Cond: (t.debit_account_id = ah.account_id)
+                           Buffers: shared hit=2886 read=383 written=4
+                           ->  Bitmap Heap Scan on bank_transaction t  (cost=34.66..20608.60 rows=87825 width=9) (actual rows=91812 loops=1)
+                                 Recheck Cond: ((created_at >= '2026-08-03 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                                 Rows Removed by Index Recheck: 13103
+                                 Filter: (((txn_type)::text = 'TRANSFER'::text) AND ((status)::text = 'COMPLETED'::text))
+                                 Rows Removed by Filter: 73964
+                                 Heap Blocks: lossy=2884
+                                 Buffers: shared hit=2886
+                                 ->  Bitmap Index Scan on brin_txn_created_at  (cost=0.00..12.70 rows=174097 width=0) (actual rows=28840 loops=1)
+                                       Index Cond: ((created_at >= '2026-08-03 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                                       Buffers: shared hit=2
+                           ->  Hash  (cost=1133.26..1133.26 rows=60019 width=8) (actual rows=60020 loops=1)
+                                 Buckets: 65536  Batches: 1  Memory Usage: 2857kB
+                                 Buffers: shared read=383 written=4
+                                 ->  Seq Scan on account_holder ah  (cost=0.00..1133.26 rows=60019 width=8) (actual rows=60020 loops=1)
+                                       Filter: ((holder_role)::text = 'PRIMARY'::text)
+                                       Rows Removed by Filter: 1
+                                       Buffers: shared read=383 written=4
+                     ->  Hash  (cost=1425.15..1425.15 rows=50015 width=16) (actual rows=50015 loops=1)
+                           Buckets: 65536  Batches: 1  Memory Usage: 2906kB
+                           Buffers: shared read=925
+                           ->  Seq Scan on customer c  (cost=0.00..1425.15 rows=50015 width=16) (actual rows=50015 loops=1)
+                                 Buffers: shared read=925
+ Planning:
+   Buffers: shared hit=177
+ Planning Time: 0.475 ms
+ Execution Time: 71.846 ms
+(42 rows)
+
+BEGIN
+SET
+                                                                                          QUERY PLAN                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=28073.14..28073.16 rows=10 width=88) (actual rows=10 loops=1)
+   Buffers: shared hit=4194
+   ->  Sort  (cost=28073.14..28198.17 rows=50015 width=88) (actual rows=10 loops=1)
+         Sort Key: (sum(t.amount)) DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=4194
+         ->  HashAggregate  (cost=26117.07..26992.33 rows=50015 width=88) (actual rows=36630 loops=1)
+               Group Key: c.customer_id
+               Batches: 1  Memory Usage: 17937kB
+               Buffers: shared hit=4194
+               ->  Hash Join  (cost=3968.50..25652.99 rows=61877 width=21) (actual rows=91812 loops=1)
+                     Hash Cond: (ah.customer_id = c.customer_id)
+                     Buffers: shared hit=4194
+                     ->  Hash Join  (cost=1918.16..23440.21 rows=61877 width=9) (actual rows=91812 loops=1)
+                           Hash Cond: (t.debit_account_id = ah.account_id)
+                           Buffers: shared hit=3269
+                           ->  Bitmap Heap Scan on bank_transaction t  (cost=34.66..20608.60 rows=87825 width=9) (actual rows=91812 loops=1)
+                                 Recheck Cond: ((created_at >= '2026-08-03 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                                 Rows Removed by Index Recheck: 13103
+                                 Filter: (((txn_type)::text = 'TRANSFER'::text) AND ((status)::text = 'COMPLETED'::text))
+                                 Rows Removed by Filter: 73964
+                                 Heap Blocks: lossy=2884
+                                 Buffers: shared hit=2886
+                                 ->  Bitmap Index Scan on brin_txn_created_at  (cost=0.00..12.70 rows=174097 width=0) (actual rows=28840 loops=1)
+                                       Index Cond: ((created_at >= '2026-08-03 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                                       Buffers: shared hit=2
+                           ->  Hash  (cost=1133.26..1133.26 rows=60019 width=8) (actual rows=60020 loops=1)
+                                 Buckets: 65536  Batches: 1  Memory Usage: 2857kB
+                                 Buffers: shared hit=383
+                                 ->  Seq Scan on account_holder ah  (cost=0.00..1133.26 rows=60019 width=8) (actual rows=60020 loops=1)
+                                       Filter: ((holder_role)::text = 'PRIMARY'::text)
+                                       Rows Removed by Filter: 1
+                                       Buffers: shared hit=383
+                     ->  Hash  (cost=1425.15..1425.15 rows=50015 width=16) (actual rows=50015 loops=1)
+                           Buckets: 65536  Batches: 1  Memory Usage: 2906kB
+                           Buffers: shared hit=925
+                           ->  Seq Scan on customer c  (cost=0.00..1425.15 rows=50015 width=16) (actual rows=50015 loops=1)
+                                 Buffers: shared hit=925
+ Planning:
+   Buffers: shared hit=28 read=2
+ Planning Time: 0.245 ms
+ Execution Time: 61.254 ms
+(42 rows)
+
+COMMIT
+
+====================================================================
+D. MATERIALIZED VIEW for the Q7 dashboard
+====================================================================
+Q7 must aggregate ~520,000 rows on every page load. The dashboard only needs
+~140 numbers per year that change once a day, so store them pre-computed.
+DROP MATERIALIZED VIEW
+Timing is on.
+SELECT 155
+Time: 334.359 ms
+CREATE INDEX
+Time: 1.272 ms
+Timing is off.
+
+D1. Dashboard query against the materialized view:
+                                                        QUERY PLAN                                                         
+---------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=4.34..4.34 rows=1 width=110) (actual time=0.048..0.050 rows=70 loops=1)
+   Sort Key: (to_char((month)::timestamp with time zone, 'YYYY-MM'::text)), channel
+   Sort Method: quicksort  Memory: 29kB
+   Buffers: shared hit=2
+   ->  Seq Scan on mv_monthly_channel_stats  (cost=0.00..4.33 rows=1 width=110) (actual time=0.006..0.022 rows=70 loops=1)
+         Filter: ((month >= '2026-01-01'::date) AND (month < '2026-11-01'::date))
+         Rows Removed by Filter: 85
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=23 read=1
+ Planning Time: 0.062 ms
+ Execution Time: 0.057 ms
+(12 rows)
+
+
+D2. Same totals as the live query? (rows returned here = mismatches; expect 0)
+ month | channel | txns | total_value | txns | total_value 
+-------+---------+------+-------------+------+-------------
+(0 rows)
+
+
+D3. The price: the view is a snapshot. It must be refreshed (e.g. nightly batch job).
+Timing is on.
+REFRESH MATERIALIZED VIEW
+Time: 378.717 ms
+Timing is off.

@@ -1,0 +1,33 @@
+-- run at 2026-11-04 03:16:24 WAT
+Timing is on.
+CREATE INDEX
+Time: 254.852 ms
+CREATE INDEX
+Time: 242.366 ms
+CREATE INDEX
+Time: 75.083 ms
+CREATE INDEX
+Time: 8.724 ms
+CREATE INDEX
+Time: 37.115 ms
+CREATE INDEX
+Time: 79.095 ms
+CREATE STATISTICS
+Time: 0.424 ms
+ANALYZE
+Time: 126.394 ms
+ANALYZE
+Time: 127.236 ms
+ANALYZE
+Time: 10.070 ms
+Timing is off.
+         index_name         |    table_name    | index_size 
+----------------------------+------------------+------------
+ ix_txn_debit_acct_created  | bank_transaction | 32 MB
+ ix_txn_credit_acct_created | bank_transaction | 32 MB
+ ux_customer_email_lower    | customer         | 2480 kB
+ ix_account_holder_customer | account_holder   | 1288 kB
+ brin_txn_created_at        | bank_transaction | 24 kB
+ ix_txn_pending_created     | bank_transaction | 16 kB
+(6 rows)
+

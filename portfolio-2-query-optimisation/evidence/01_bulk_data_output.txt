@@ -1,0 +1,82 @@
+-- run at 2026-11-04 03:15:59 WAT
+Timing is on.
+SET
+Time: 0.093 ms
+ setseed 
+---------
+ 
+(1 row)
+
+Time: 0.252 ms
+INSERT 0 50000
+Time: 517.928 ms
+Time: 0.412 ms
+Time: 0.194 ms
+Time: 0.256 ms
+INSERT 0 60000
+Time: 412.996 ms
+Time: 0.205 ms
+INSERT 0 60000
+Time: 287.363 ms
+Time: 0.160 ms
+psql:/portfolio/portfolio-2-query-optimisation/sql/01_bulk_data.sql:105: NOTICE:  table "staging_txn" does not exist, skipping
+DROP TABLE
+Time: 0.181 ms
+SELECT 1000000
+Time: 1447.319 ms (00:01.447)
+ALTER TABLE
+Time: 0.819 ms
+UPDATE 1000000
+Time: 632.825 ms
+SELECT 60000
+Time: 1053.810 ms (00:01.054)
+INSERT 0 1060000
+Time: 9118.490 ms (00:09.118)
+UPDATE 60000
+Time: 758.303 ms
+DROP TABLE
+Time: 12.861 ms
+DROP TABLE
+Time: 0.672 ms
+VACUUM
+Time: 379.636 ms
+Timing is off.
+    table_name    |  rows   | total_size 
+------------------+---------+------------
+ customer         |   50015 | 14 MB
+ account          |   60020 | 17 MB
+ account_holder   |   60021 | 5752 kB
+ bank_transaction | 1060052 | 204 MB
+(4 rows)
+
+  txn_type  |  status   |  txns  |  pct  
+------------+-----------+--------+-------
+ DEPOSIT    | COMPLETED | 310123 | 29.26
+ FEE        | COMPLETED |  30073 |  2.84
+ REVERSAL   | COMPLETED |      1 |  0.00
+ TRANSFER   | COMPLETED | 554117 | 52.27
+ TRANSFER   | FAILED    |  15378 |  1.45
+ TRANSFER   | PENDING   |    220 |  0.02
+ TRANSFER   | REVERSED  |      1 |  0.00
+ WITHDRAWAL | COMPLETED | 146035 | 13.78
+ WITHDRAWAL | FAILED    |   4104 |  0.39
+(9 rows)
+
+ pct_of_debits_by_top_10pct_accounts 
+-------------------------------------
+                                32.5
+(1 row)
+
+ quarter |  txns  
+---------+--------
+ 2024 Q4 |  60000
+ 2025 Q1 |  81485
+ 2025 Q2 | 113766
+ 2025 Q3 | 130124
+ 2025 Q4 | 142801
+ 2026 Q1 | 148510
+ 2026 Q2 | 158227
+ 2026 Q3 | 167350
+ 2026 Q4 |  57789
+(9 rows)
+

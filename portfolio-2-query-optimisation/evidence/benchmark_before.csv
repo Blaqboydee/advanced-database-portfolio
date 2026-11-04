@@ -1,0 +1,12 @@
+query,title,median_ms,min_ms,max_ms,runs
+Q1,Mobile app: 20 most recent transactions of an account (OR on two columns),50.936,50.037,55.104,5
+Q1b,"Same result as Q1, rewritten as UNION ALL of two ordered branches",91.237,90.042,92.531,5
+Q1c,"Same as Q1b, but the account_id is passed as a value (planner can use per-value statistics)",32.111,31.492,32.876,5
+Q2,Monthly statement (October 2026) with opening and running balance,73.917,72.663,75.582,5
+Q3,"Login: find a customer by e-mail, case-insensitive",10.090,10.037,10.911,5
+Q4,"Customer-service screen: all accounts of a customer, looked up by BVN",0.660,0.621,0.741,5
+Q5,Fraud-review queue: oldest 50 PENDING transactions,20.274,20.055,21.213,5
+Q6,Compliance: top 10 customers by value transferred out in the last 90 days,69.171,68.544,70.478,5
+Q7,"Management dashboard: monthly volume and value per channel, Jan-Oct 2026",306.053,305.471,310.311,5
+Q7b,"Same result as Q7: group on an immutable month expression, format the text after aggregating",233.510,231.616,249.033,5
+Q8,Dormancy report: ACTIVE accounts per branch with no posted activity since 1 May 2026,72.617,70.894,74.237,5

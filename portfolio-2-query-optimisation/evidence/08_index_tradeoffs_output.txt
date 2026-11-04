@@ -1,0 +1,100 @@
+-- run at 2026-11-04 03:16:30 WAT
+SET
+SET
+
+====================================================================
+E. STORAGE: every index is extra data that must be stored and cached
+====================================================================
+               relation               | kind  | method |  size   | pct_of_table 
+--------------------------------------+-------+--------+---------+--------------
+ bank_transaction                     | table | heap   | 134 MB  |        100.0
+ bank_transaction_reference_key       | index | btree  | 41 MB   |         31.0
+ ix_txn_debit_acct_created            | index | btree  | 32 MB   |         23.9
+ ix_txn_credit_acct_created           | index | btree  | 32 MB   |         23.9
+ bank_transaction_pkey                | index | btree  | 23 MB   |         17.0
+ bank_transaction_reverses_txn_id_key | index | btree  | 6696 kB |          4.9
+ brin_txn_created_at                  | index | brin   | 24 kB   |          0.0
+ ix_txn_pending_created               | index | btree  | 16 kB   |          0.0
+(8 rows)
+
+
+====================================================================
+F. ALTERNATIVE INDEX DESIGNS (built, measured, then rolled back)
+====================================================================
+BEGIN
+CREATE INDEX
+CREATE INDEX
+F1/F2. Size comparison:
+       index_name        | size  |  bytes   
+-------------------------+-------+----------
+ ix_txn_pending_created  | 16 kB |    16384
+ brin_txn_created_at     | 24 kB |    24576
+ tmp_btree_created       | 23 MB | 23838720
+ tmp_full_status_created | 41 MB | 42893312
+(4 rows)
+
+
+F3. Q6 with the B-tree instead of BRIN (BRIN dropped inside this transaction).
+    Compare the Execution Time with Q6 in evidence/05_plans_after_indexing.txt.
+DROP INDEX
+                                                                                       QUERY PLAN                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=20810.56..20810.58 rows=10 width=88) (actual rows=10 loops=1)
+   Buffers: shared hit=4087 read=454, temp read=164 written=325
+   ->  Sort  (cost=20810.56..20935.59 rows=50015 width=88) (actual rows=10 loops=1)
+         Sort Key: (sum(t.amount)) DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=4087 read=454, temp read=164 written=325
+         ->  HashAggregate  (cost=18144.49..19729.75 rows=50015 width=88) (actual rows=36630 loops=1)
+               Group Key: c.customer_id
+               Planned Partitions: 4  Batches: 5  Memory Usage: 8241kB  Disk Usage: 1664kB
+               Buffers: shared hit=4084 read=454, temp read=164 written=325
+               ->  Hash Join  (cost=3934.27..13638.41 rows=60586 width=21) (actual rows=91812 loops=1)
+                     Hash Cond: (ah.customer_id = c.customer_id)
+                     Buffers: shared hit=4084 read=454
+                     ->  Hash Join  (cost=1883.93..11429.02 rows=60586 width=9) (actual rows=91812 loops=1)
+                           Hash Cond: (t.debit_account_id = ah.account_id)
+                           Buffers: shared hit=3159 read=454
+                           ->  Index Scan using tmp_btree_created on bank_transaction t  (cost=0.43..8617.19 rows=85993 width=9) (actual rows=91812 loops=1)
+                                 Index Cond: ((created_at >= '2026-08-03 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                                 Filter: (((txn_type)::text = 'TRANSFER'::text) AND ((status)::text = 'COMPLETED'::text))
+                                 Rows Removed by Filter: 73964
+                                 Buffers: shared hit=2776 read=454
+                           ->  Hash  (cost=1133.26..1133.26 rows=60019 width=8) (actual rows=60020 loops=1)
+                                 Buckets: 65536  Batches: 1  Memory Usage: 2857kB
+                                 Buffers: shared hit=383
+                                 ->  Seq Scan on account_holder ah  (cost=0.00..1133.26 rows=60019 width=8) (actual rows=60020 loops=1)
+                                       Filter: ((holder_role)::text = 'PRIMARY'::text)
+                                       Rows Removed by Filter: 1
+                                       Buffers: shared hit=383
+                     ->  Hash  (cost=1425.15..1425.15 rows=50015 width=16) (actual rows=50015 loops=1)
+                           Buckets: 65536  Batches: 1  Memory Usage: 2906kB
+                           Buffers: shared hit=925
+                           ->  Seq Scan on customer c  (cost=0.00..1425.15 rows=50015 width=16) (actual rows=50015 loops=1)
+                                 Buffers: shared hit=925
+ Planning:
+   Buffers: shared hit=300 read=5
+ Planning Time: 0.440 ms
+ Execution Time: 64.978 ms
+(37 rows)
+
+ROLLBACK
+Rolled back: temporary indexes removed and the BRIN index restored.
+
+====================================================================
+G. WRITE OVERHEAD: every INSERT must also update every index
+====================================================================
+Copy 200,000 transactions into an empty table, 3 times without the
+Portfolio 2 indexes and 3 times with them, and compare the average.
+psql:/portfolio/portfolio-2-query-optimisation/sql/05_index_tradeoffs.sql:79: NOTICE:  table "perf_txn_copy" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+CREATE TABLE
+DO
+          setup           | avg_ms_per_200k_rows | avg_microseconds_per_row | individual_runs_ms 
+--------------------------+----------------------+--------------------------+--------------------
+ no secondary indexes     |                   93 |                     0.47 | {89,108,84}
+ with Portfolio 2 indexes |                  370 |                     1.85 | {375,374,361}
+(2 rows)
+
+DROP TABLE

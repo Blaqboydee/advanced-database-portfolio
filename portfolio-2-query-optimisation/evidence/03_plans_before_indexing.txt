@@ -1,0 +1,386 @@
+-- run at 2026-11-04 03:16:16 WAT
+SET
+### Q1  Mobile app: 20 most recent transactions of an account (OR on two columns)
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=43602.44..43602.49 rows=20 width=82) (actual time=88.265..88.267 rows=20 loops=1)
+   Buffers: shared hit=12637 read=4462 written=31
+   ->  Sort  (cost=43602.44..43602.51 rows=27 width=82) (actual time=88.264..88.265 rows=20 loops=1)
+         Sort Key: t.created_at DESC
+         Sort Method: top-N heapsort  Memory: 30kB
+         Buffers: shared hit=12637 read=4462 written=31
+         ->  Nested Loop  (cost=0.41..43601.80 rows=27 width=82) (actual time=2.552..87.916 rows=3086 loops=1)
+               Join Filter: ((t.debit_account_id = a.account_id) OR (t.credit_account_id = a.account_id))
+               Rows Removed by Join Filter: 1056966
+               Buffers: shared hit=12634 read=4462 written=31
+               ->  Index Scan using account_account_number_key on account a  (cost=0.41..8.43 rows=1 width=4) (actual time=0.012..0.014 rows=1 loops=1)
+                     Index Cond: (account_number = '3100000001'::bpchar)
+                     Buffers: shared hit=4
+               ->  Seq Scan on bank_transaction t  (cost=0.00..27692.52 rows=1060052 width=58) (actual time=0.009..38.321 rows=1060052 loops=1)
+                     Buffers: shared hit=12630 read=4462 written=31
+ Planning:
+   Buffers: shared hit=207 read=3
+ Planning Time: 0.251 ms
+ Execution Time: 88.287 ms
+(19 rows)
+
+### Q1b Same result as Q1, rewritten as UNION ALL of two ordered branches
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=63345.01..63345.26 rows=20 width=82) (actual time=167.530..167.536 rows=20 loops=1)
+   Buffers: shared hit=25360 read=8828
+   CTE a
+     ->  Index Scan using account_account_number_key on account  (cost=0.41..8.43 rows=1 width=4) (actual time=0.010..0.011 rows=1 loops=1)
+           Index Cond: (account_number = '3100000001'::bpchar)
+           Buffers: shared hit=4
+   ->  Merge Append  (cost=63336.58..63337.02 rows=35 width=82) (actual time=167.529..167.535 rows=20 loops=1)
+         Sort Key: t.created_at DESC
+         Buffers: shared hit=25360 read=8828
+         ->  Limit  (cost=31668.34..31668.39 rows=19 width=82) (actual time=84.051..84.054 rows=20 loops=1)
+               Buffers: shared hit=12666 read=4430
+               ->  Sort  (cost=31668.34..31668.39 rows=19 width=82) (actual time=84.051..84.053 rows=20 loops=1)
+                     Sort Key: t.created_at DESC
+                     Sort Method: top-N heapsort  Memory: 30kB
+                     Buffers: shared hit=12666 read=4430
+                     ->  Hash Join  (cost=0.03..31667.94 rows=19 width=82) (actual time=4.675..83.558 rows=3074 loops=1)
+                           Hash Cond: (t.debit_account_id = a.account_id)
+                           Buffers: shared hit=12666 read=4430
+                           ->  Seq Scan on bank_transaction t  (cost=0.00..27692.52 rows=1060052 width=54) (actual time=0.013..37.963 rows=1060052 loops=1)
+                                 Buffers: shared hit=12662 read=4430
+                           ->  Hash  (cost=0.02..0.02 rows=1 width=4) (actual time=0.015..0.015 rows=1 loops=1)
+                                 Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                 Buffers: shared hit=4
+                                 ->  CTE Scan on a  (cost=0.00..0.02 rows=1 width=4) (actual time=0.011..0.012 rows=1 loops=1)
+                                       Buffers: shared hit=4
+         ->  Limit  (cost=31668.23..31668.27 rows=16 width=82) (actual time=83.475..83.476 rows=1 loops=1)
+               Buffers: shared hit=12694 read=4398
+               ->  Sort  (cost=31668.23..31668.27 rows=16 width=82) (actual time=83.474..83.475 rows=1 loops=1)
+                     Sort Key: t_1.created_at DESC
+                     Sort Method: quicksort  Memory: 26kB
+                     Buffers: shared hit=12694 read=4398
+                     ->  Hash Join  (cost=0.03..31667.91 rows=16 width=82) (actual time=2.194..83.437 rows=12 loops=1)
+                           Hash Cond: (t_1.credit_account_id = a_1.account_id)
+                           Buffers: shared hit=12694 read=4398
+                           ->  Seq Scan on bank_transaction t_1  (cost=0.00..27692.52 rows=1060052 width=54) (actual time=0.016..36.299 rows=1060052 loops=1)
+                                 Buffers: shared hit=12694 read=4398
+                           ->  Hash  (cost=0.02..0.02 rows=1 width=4) (actual time=0.003..0.003 rows=1 loops=1)
+                                 Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                 ->  CTE Scan on a a_1  (cost=0.00..0.02 rows=1 width=4) (actual time=0.001..0.001 rows=1 loops=1)
+ Planning:
+   Buffers: shared hit=70
+ Planning Time: 0.246 ms
+ Execution Time: 167.598 ms
+(43 rows)
+
+### Q1c Same as Q1b, but the account_id is passed as a value (planner can use per-value statistics)
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=47265.53..47268.07 rows=20 width=82) (actual time=32.324..33.716 rows=20 loops=1)
+   Buffers: shared hit=25696 read=8636 written=156
+   ->  Merge Append  (cost=47265.53..47269.84 rows=34 width=82) (actual time=32.323..33.715 rows=20 loops=1)
+         Sort Key: t.created_at DESC
+         Buffers: shared hit=25696 read=8636 written=156
+         ->  Limit  (cost=23652.30..23654.63 rows=20 width=82) (actual time=15.105..15.148 rows=20 loops=1)
+               Buffers: shared hit=12800 read=4366 written=60
+               ->  Gather Merge  (cost=23652.30..23995.79 rows=2944 width=82) (actual time=15.105..15.147 rows=20 loops=1)
+                     Workers Planned: 2
+                     Workers Launched: 2
+                     Buffers: shared hit=12800 read=4366 written=60
+                     ->  Sort  (cost=22652.27..22655.95 rows=1472 width=82) (actual time=14.059..14.060 rows=16 loops=3)
+                           Sort Key: t.created_at DESC
+                           Sort Method: top-N heapsort  Memory: 30kB
+                           Buffers: shared hit=12800 read=4366 written=60
+                           Worker 0:  Sort Method: top-N heapsort  Memory: 30kB
+                           Worker 1:  Sort Method: top-N heapsort  Memory: 30kB
+                           ->  Parallel Seq Scan on bank_transaction t  (cost=0.00..22613.10 rows=1472 width=82) (actual time=1.177..13.913 rows=1025 loops=3)
+                                 Filter: (debit_account_id = 21)
+                                 Rows Removed by Filter: 352326
+                                 Buffers: shared hit=12726 read=4366 written=60
+         ->  Limit  (cost=23613.23..23614.86 rows=14 width=82) (actual time=17.216..18.563 rows=1 loops=1)
+               Buffers: shared hit=12896 read=4270 written=96
+               ->  Gather Merge  (cost=23613.23..23614.86 rows=14 width=82) (actual time=17.215..18.562 rows=1 loops=1)
+                     Workers Planned: 2
+                     Workers Launched: 2
+                     Buffers: shared hit=12896 read=4270 written=96
+                     ->  Sort  (cost=22613.20..22613.22 rows=7 width=82) (actual time=15.895..15.895 rows=2 loops=3)
+                           Sort Key: t_1.created_at DESC
+                           Sort Method: quicksort  Memory: 25kB
+                           Buffers: shared hit=12896 read=4270 written=96
+                           Worker 0:  Sort Method: quicksort  Memory: 25kB
+                           Worker 1:  Sort Method: quicksort  Memory: 25kB
+                           ->  Parallel Seq Scan on bank_transaction t_1  (cost=0.00..22613.10 rows=7 width=82) (actual time=2.827..15.867 rows=4 loops=3)
+                                 Filter: (credit_account_id = 21)
+                                 Rows Removed by Filter: 353347
+                                 Buffers: shared hit=12822 read=4270 written=96
+ Planning Time: 0.050 ms
+ Execution Time: 33.733 ms
+(39 rows)
+
+### Q2  Monthly statement (October 2026) with opening and running balance
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ WindowAgg  (cost=45950.70..45950.73 rows=1 width=472) (actual time=104.482..104.489 rows=11 loops=1)
+   Buffers: shared hit=12925 read=4174
+   CTE legs
+     ->  Nested Loop  (cost=0.41..45949.36 rows=27 width=75) (actual time=3.162..104.230 rows=177 loops=1)
+           Join Filter: ((t.debit_account_id = account.account_id) OR (t.credit_account_id = account.account_id))
+           Rows Removed by Join Filter: 1040173
+           Buffers: shared hit=12922 read=4174
+           ->  Index Scan using account_account_number_key on account  (cost=0.41..8.43 rows=1 width=4) (actual time=0.006..0.008 rows=1 loops=1)
+                 Index Cond: (account_number = '3100000100'::bpchar)
+                 Buffers: shared hit=4
+           ->  Seq Scan on bank_transaction t  (cost=0.00..30342.65 rows=1039876 width=56) (actual time=0.010..75.554 rows=1040350 loops=1)
+                 Filter: ((status)::text = ANY ('{COMPLETED,REVERSED}'::text[]))
+                 Rows Removed by Filter: 19702
+                 Buffers: shared hit=12918 read=4174
+   ->  Sort  (cost=1.34..1.34 rows=1 width=436) (actual time=104.474..104.475 rows=11 loops=1)
+         Sort Key: l.created_at, l.txn_id
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=12925 read=4174
+         ->  Nested Loop  (cost=0.63..1.33 rows=1 width=436) (actual time=104.296..104.468 rows=11 loops=1)
+               Buffers: shared hit=12922 read=4174
+               ->  CTE Scan on legs l  (cost=0.00..0.68 rows=1 width=404) (actual time=98.987..98.988 rows=11 loops=1)
+                     Filter: ((created_at >= '2026-10-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone))
+                     Rows Removed by Filter: 166
+                     Buffers: shared hit=12021 read=4174
+               ->  Aggregate  (cost=0.63..0.64 rows=1 width=32) (actual time=0.498..0.498 rows=1 loops=11)
+                     Buffers: shared hit=901
+                     ->  CTE Scan on legs  (cost=0.00..0.61 rows=9 width=32) (actual time=0.000..0.488 rows=166 loops=11)
+                           Filter: (created_at < '2026-10-01 00:00:00+01'::timestamp with time zone)
+                           Rows Removed by Filter: 11
+                           Buffers: shared hit=901
+ Planning:
+   Buffers: shared hit=73
+ Planning Time: 0.209 ms
+ Execution Time: 104.516 ms
+(34 rows)
+
+### Q3  Login: find a customer by e-mail, case-insensitive
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Seq Scan on customer  (cost=0.00..1675.22 rows=250 width=25) (actual time=0.207..10.068 rows=1 loops=1)
+   Filter: (lower((email)::text) = 'hauwa.okonkwo1000@example.com'::text)
+   Rows Removed by Filter: 50014
+   Buffers: shared hit=925
+ Planning:
+   Buffers: shared hit=66
+ Planning Time: 0.132 ms
+ Execution Time: 10.073 ms
+(8 rows)
+
+### Q4  Customer-service screen: all accounts of a customer, looked up by BVN
+                                                                            QUERY PLAN                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=1128.28..1128.28 rows=1 width=82) (actual time=0.366..0.367 rows=2 loops=1)
+   Sort Key: a.account_number
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=181
+   ->  Nested Loop  (cost=0.87..1128.27 rows=1 width=82) (actual time=0.023..0.359 rows=2 loops=1)
+         Join Filter: ((at.type_code)::text = (a.type_code)::text)
+         Buffers: shared hit=178
+         ->  Nested Loop  (cost=0.87..1127.20 rows=1 width=51) (actual time=0.020..0.356 rows=2 loops=1)
+               Buffers: shared hit=176
+               ->  Nested Loop  (cost=0.58..1126.77 rows=1 width=23) (actual time=0.018..0.348 rows=2 loops=1)
+                     Buffers: shared hit=170
+                     ->  Index Scan using customer_bvn_key on customer c  (cost=0.29..8.31 rows=1 width=16) (actual time=0.013..0.013 rows=1 loops=1)
+                           Index Cond: (bvn = '22200000100'::bpchar)
+                           Buffers: shared hit=3
+                     ->  Index Scan using account_holder_pkey on account_holder ah  (cost=0.29..1118.46 rows=1 width=15) (actual time=0.003..0.333 rows=2 loops=1)
+                           Index Cond: (customer_id = c.customer_id)
+                           Buffers: shared hit=167
+               ->  Index Scan using account_pkey on account a  (cost=0.29..0.42 rows=1 width=36) (actual time=0.004..0.004 rows=1 loops=2)
+                     Index Cond: (account_id = ah.account_id)
+                     Buffers: shared hit=6
+         ->  Seq Scan on account_type at  (cost=0.00..1.03 rows=3 width=27) (actual time=0.001..0.001 rows=1 loops=2)
+               Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=179
+ Planning Time: 0.268 ms
+ Execution Time: 0.376 ms
+(26 rows)
+
+### Q5  Fraud-review queue: oldest 50 PENDING transactions
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=23616.55..23622.38 rows=50 width=49) (actual time=19.616..21.261 rows=50 loops=1)
+   Buffers: shared hit=13024 read=4142 written=28
+   ->  Gather Merge  (cost=23616.55..23640.58 rows=206 width=49) (actual time=19.615..21.258 rows=50 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=13024 read=4142 written=28
+         ->  Sort  (cost=22616.53..22616.78 rows=103 width=49) (actual time=18.605..18.606 rows=40 loops=3)
+               Sort Key: created_at
+               Sort Method: quicksort  Memory: 35kB
+               Buffers: shared hit=13024 read=4142 written=28
+               Worker 0:  Sort Method: quicksort  Memory: 35kB
+               Worker 1:  Sort Method: quicksort  Memory: 32kB
+               ->  Parallel Seq Scan on bank_transaction  (cost=0.00..22613.10 rows=103 width=49) (actual time=11.894..18.563 rows=73 loops=3)
+                     Filter: ((status)::text = 'PENDING'::text)
+                     Rows Removed by Filter: 353277
+                     Buffers: shared hit=12950 read=4142 written=28
+ Planning Time: 0.021 ms
+ Execution Time: 21.269 ms
+(18 rows)
+
+### Q6  Compliance: top 10 customers by value transferred out in the last 90 days
+                                                                                                                                       QUERY PLAN                                                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=42164.34..42164.36 rows=10 width=88) (actual time=82.962..83.983 rows=10 loops=1)
+   Buffers: shared hit=17067 read=4046 written=78
+   ->  Sort  (cost=42164.34..42289.38 rows=50015 width=88) (actual time=82.961..83.982 rows=10 loops=1)
+         Sort Key: (sum(t.amount)) DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=17067 read=4046 written=78
+         ->  Finalize GroupAggregate  (cost=33197.40..41083.53 rows=50015 width=88) (actual time=51.009..80.375 rows=36630 loops=1)
+               Group Key: c.customer_id
+               Buffers: shared hit=17064 read=4046 written=78
+               ->  Gather Merge  (cost=33197.40..39695.31 rows=51296 width=56) (actual time=51.004..65.960 rows=58867 loops=1)
+                     Workers Planned: 2
+                     Workers Launched: 2
+                     Buffers: shared hit=17064 read=4046 written=78
+                     ->  Partial GroupAggregate  (cost=32197.37..32774.45 rows=25648 width=56) (actual time=49.555..57.348 rows=19622 loops=3)
+                           Group Key: c.customer_id
+                           Buffers: shared hit=17064 read=4046 written=78
+                           ->  Sort  (cost=32197.37..32261.49 rows=25648 width=21) (actual time=49.532..51.032 rows=30604 loops=3)
+                                 Sort Key: c.customer_id
+                                 Sort Method: quicksort  Memory: 3309kB
+                                 Buffers: shared hit=17064 read=4046 written=78
+                                 Worker 0:  Sort Method: quicksort  Memory: 1957kB
+                                 Worker 1:  Sort Method: quicksort  Memory: 2061kB
+                                 ->  Hash Join  (cost=3933.84..30319.10 rows=25648 width=21) (actual time=25.403..45.600 rows=30604 loops=3)
+                                       Hash Cond: (ah.customer_id = c.customer_id)
+                                       Buffers: shared hit=16992 read=4046 written=78
+                                       ->  Hash Join  (cost=1883.50..28201.43 rows=25648 width=9) (actual time=18.976..33.632 rows=30604 loops=3)
+                                             Hash Cond: (t.debit_account_id = ah.account_id)
+                                             Buffers: shared hit=14195 read=4046 written=78
+                                             ->  Parallel Seq Scan on bank_transaction t  (cost=0.00..25925.77 rows=36181 width=9) (actual time=12.227..21.283 rows=30604 loops=3)
+                                                   Filter: ((created_at >= '2026-08-03 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone) AND ((txn_type)::text = 'TRANSFER'::text) AND ((status)::text = 'COMPLETED'::text))
+                                                   Rows Removed by Filter: 322747
+                                                   Buffers: shared hit=13046 read=4046 written=78
+                                             ->  Hash  (cost=1133.26..1133.26 rows=60019 width=8) (actual time=6.647..6.647 rows=60020 loops=3)
+                                                   Buckets: 65536  Batches: 1  Memory Usage: 2857kB
+                                                   Buffers: shared hit=1149
+                                                   ->  Seq Scan on account_holder ah  (cost=0.00..1133.26 rows=60019 width=8) (actual time=0.008..3.183 rows=60020 loops=3)
+                                                         Filter: ((holder_role)::text = 'PRIMARY'::text)
+                                                         Rows Removed by Filter: 1
+                                                         Buffers: shared hit=1149
+                                       ->  Hash  (cost=1425.15..1425.15 rows=50015 width=16) (actual time=6.342..6.342 rows=50015 loops=3)
+                                             Buckets: 65536  Batches: 1  Memory Usage: 2906kB
+                                             Buffers: shared hit=2775
+                                             ->  Seq Scan on customer c  (cost=0.00..1425.15 rows=50015 width=16) (actual time=0.006..2.561 rows=50015 loops=3)
+                                                   Buffers: shared hit=2775
+ Planning:
+   Buffers: shared hit=43
+ Planning Time: 0.177 ms
+ Execution Time: 84.115 ms
+(48 rows)
+
+### Q7  Management dashboard: monthly volume and value per channel, Jan-Oct 2026
+                                                                                                QUERY PLAN                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=104522.41..120320.77 rows=526612 width=78) (actual time=264.613..349.908 rows=70 loops=1)
+   Group Key: (to_char(date_trunc('month'::text, created_at), 'YYYY-MM'::text)), channel
+   Buffers: shared hit=13145 read=3950, temp read=1920 written=1929
+   ->  Sort  (cost=104522.41..105838.94 rows=526612 width=43) (actual time=263.687..306.184 rows=521437 loops=1)
+         Sort Key: (to_char(date_trunc('month'::text, created_at), 'YYYY-MM'::text)), channel
+         Sort Method: external merge  Disk: 15360kB
+         Buffers: shared hit=13145 read=3950, temp read=1920 written=1929
+         ->  Seq Scan on bank_transaction  (cost=0.00..38275.97 rows=526612 width=43) (actual time=4.998..186.886 rows=521437 loops=1)
+               Filter: ((created_at >= '2026-01-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone) AND ((status)::text = 'COMPLETED'::text))
+               Rows Removed by Filter: 538615
+               Buffers: shared hit=13142 read=3950
+ Planning Time: 0.057 ms
+ JIT:
+   Functions: 9
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 0.289 ms, Inlining 0.000 ms, Optimization 0.223 ms, Emission 4.731 ms, Total 5.243 ms
+ Execution Time: 360.654 ms
+(17 rows)
+
+### Q7b Same result as Q7: group on an immutable month expression, format the text after aggregating
+                                                                                                   QUERY PLAN                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on m  (cost=99121.91..116236.80 rows=526612 width=86) (actual time=208.381..276.947 rows=70 loops=1)
+   Buffers: shared hit=13177 read=3918, temp read=1920 written=1929
+   ->  GroupAggregate  (cost=99121.91..114920.27 rows=526612 width=54) (actual time=208.377..276.924 rows=70 loops=1)
+         Group Key: (date_trunc('month'::text, (bank_transaction.created_at AT TIME ZONE 'Africa/Lagos'::text))), bank_transaction.channel
+         Buffers: shared hit=13177 read=3918, temp read=1920 written=1929
+         ->  Sort  (cost=99121.91..100438.44 rows=526612 width=19) (actual time=207.901..232.281 rows=521437 loops=1)
+               Sort Key: (date_trunc('month'::text, (bank_transaction.created_at AT TIME ZONE 'Africa/Lagos'::text))), bank_transaction.channel
+               Sort Method: external merge  Disk: 15360kB
+               Buffers: shared hit=13177 read=3918, temp read=1920 written=1929
+               ->  Seq Scan on bank_transaction  (cost=0.00..38275.97 rows=526612 width=19) (actual time=3.521..156.511 rows=521437 loops=1)
+                     Filter: ((created_at >= '2026-01-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone) AND ((status)::text = 'COMPLETED'::text))
+                     Rows Removed by Filter: 538615
+                     Buffers: shared hit=13174 read=3918
+ Planning:
+   Buffers: shared hit=11
+ Planning Time: 0.069 ms
+ JIT:
+   Functions: 10
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 0.302 ms, Inlining 0.000 ms, Optimization 0.184 ms, Emission 3.341 ms, Total 3.827 ms
+ Execution Time: 277.750 ms
+(21 rows)
+
+### Q8  Dormancy report: ACTIVE accounts per branch with no posted activity since 1 May 2026
+                                                                                         QUERY PLAN                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=52625.60..52625.62 rows=5 width=22) (actual time=80.257..82.638 rows=5 loops=1)
+   Sort Key: (count(*)) DESC
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=27870 read=7805
+   ->  Finalize GroupAggregate  (cost=52620.23..52625.55 rows=5 width=22) (actual time=80.251..82.634 rows=5 loops=1)
+         Group Key: b.branch_name
+         Buffers: shared hit=27870 read=7805
+         ->  Gather Merge  (cost=52620.23..52625.45 rows=10 width=22) (actual time=80.248..82.631 rows=5 loops=1)
+               Workers Planned: 2
+               Workers Launched: 2
+               Buffers: shared hit=27870 read=7805
+               ->  Partial GroupAggregate  (cost=51620.20..51624.27 rows=5 width=22) (actual time=74.181..74.185 rows=2 loops=3)
+                     Group Key: b.branch_name
+                     Buffers: shared hit=27870 read=7805
+                     ->  Sort  (cost=51620.20..51621.54 rows=535 width=14) (actual time=74.178..74.182 rows=13 loops=3)
+                           Sort Key: b.branch_name
+                           Sort Method: quicksort  Memory: 25kB
+                           Buffers: shared hit=27870 read=7805
+                           Worker 0:  Sort Method: quicksort  Memory: 25kB
+                           Worker 1:  Sort Method: quicksort  Memory: 25kB
+                           ->  Parallel Hash Right Anti Join  (cost=27345.47..51595.96 rows=535 width=14) (actual time=74.147..74.155 rows=13 loops=3)
+                                 Hash Cond: (t.debit_account_id = a.account_id)
+                                 Buffers: shared hit=27796 read=7805
+                                 ->  Parallel Seq Scan on bank_transaction t  (cost=0.00..23717.33 rows=135680 width=4) (actual time=11.345..26.493 rows=108492 loops=3)
+                                       Filter: (((status)::text = ANY ('{COMPLETED,REVERSED}'::text[])) AND (created_at >= '2026-05-01 00:00:00+01'::timestamp with time zone))
+                                       Rows Removed by Filter: 244859
+                                       Buffers: shared hit=13302 read=3790
+                                 ->  Parallel Hash  (cost=27326.45..27326.45 rows=1521 width=18) (actual time=43.769..43.771 rows=233 loops=3)
+                                       Buckets: 4096  Batches: 1  Memory Usage: 96kB
+                                       Buffers: shared hit=14466 read=4015
+                                       ->  Parallel Hash Right Anti Join  (cost=2434.98..27326.45 rows=1521 width=18) (actual time=42.980..43.203 rows=233 loops=3)
+                                             Hash Cond: (t_1.credit_account_id = a.account_id)
+                                             Buffers: shared hit=14466 read=4015
+                                             ->  Parallel Seq Scan on bank_transaction t_1  (cost=0.00..23717.33 rows=135680 width=4) (actual time=11.763..27.973 rows=108492 loops=3)
+                                                   Filter: (((status)::text = ANY ('{COMPLETED,REVERSED}'::text[])) AND (created_at >= '2026-05-01 00:00:00+01'::timestamp with time zone))
+                                                   Rows Removed by Filter: 244859
+                                                   Buffers: shared hit=13212 read=3886
+                                             ->  Parallel Hash  (cost=1993.67..1993.67 rows=35305 width=18) (actual time=4.926..4.928 rows=20006 loops=3)
+                                                   Buckets: 65536  Batches: 1  Memory Usage: 3744kB
+                                                   Buffers: shared hit=1254 read=129
+                                                   ->  Hash Join  (cost=1.11..1993.67 rows=35305 width=18) (actual time=0.023..3.149 rows=20006 loops=3)
+                                                         Hash Cond: (a.branch_id = b.branch_id)
+                                                         Buffers: shared hit=1254 read=129
+                                                         ->  Parallel Seq Scan on account a  (cost=0.00..1821.32 rows=35305 width=8) (actual time=0.005..1.726 rows=20006 loops=3)
+                                                               Filter: ((status)::text = 'ACTIVE'::text)
+                                                               Rows Removed by Filter: 1
+                                                               Buffers: shared hit=1251 read=129
+                                                         ->  Hash  (cost=1.05..1.05 rows=5 width=18) (actual time=0.009..0.009 rows=5 loops=3)
+                                                               Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                               Buffers: shared hit=3
+                                                               ->  Seq Scan on branch b  (cost=0.00..1.05 rows=5 width=18) (actual time=0.006..0.007 rows=5 loops=3)
+                                                                     Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=59
+ Planning Time: 0.235 ms
+ Execution Time: 82.668 ms
+(56 rows)
+
