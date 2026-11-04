@@ -1,0 +1,382 @@
+-- run at 2026-11-04 11:03:01 WAT
+
+======================================================================
+M1. CUSTOMER 360 for the mobile app: ONE document read
+======================================================================
+Before indexing contact.phone:
+{
+  plan: 'COLLSCAN',
+  keysExamined: 0,
+  docsExamined: 50020,
+  returned: 1,
+  timeMs: 12
+}
+After  db.customers.createIndex({ 'contact.phone': 1 }, { unique: true }):
+{
+  plan: 'FETCH <- IXSCAN(ux_contact_phone)',
+  keysExamined: 1,
+  docsExamined: 1,
+  returned: 1,
+  timeMs: 0
+}
+The document (everything the app's home screen needs):
+{
+  _id: 1015,
+  bvn: '22200001000',
+  name: {
+    first: 'Hauwa',
+    last: 'Okonkwo'
+  },
+  contact: {
+    phone: '+2348100001000',
+    email: 'hauwa.okonkwo1000@example.com'
+  },
+  dateOfBirth: ISODate('1984-06-08T00:00:00.000Z'),
+  address: {
+    city: 'Benin City',
+    state: 'Edo'
+  },
+  status: 'ACTIVE',
+  kyc: {
+    tier: 2,
+    dailyDebitLimit: Decimal128('200000.00'),
+    maxBalance: Decimal128('500000.00'),
+    verifiedBy: [
+      'BVN',
+      'PHONE',
+      'NIN'
+    ],
+    documents: [
+      {
+        type: 'NIN',
+        number: '70000001015',
+        verifiedAt: ISODate('2024-11-09T18:31:41.000Z')
+      }
+    ]
+  },
+  accounts: [
+    {
+      accountNumber: '3100001000',
+      product: 'SAV_NGN',
+      currency: 'NGN',
+      role: 'PRIMARY',
+      status: 'ACTIVE',
+      balance: Decimal128('107100.00'),
+      branch: {
+        code: '001',
+        name: 'Lagos Island Main'
+      },
+      openedAt: ISODate('2024-12-26T13:36:01.000Z')
+    },
+    {
+      accountNumber: '3100051000',
+      product: 'SAV_NGN',
+      currency: 'NGN',
+      role: 'PRIMARY',
+      status: 'ACTIVE',
+      balance: Decimal128('395580.00'),
+      branch: {
+        code: '002',
+        name: 'Ikeja'
+      },
+      openedAt: ISODate('2024-12-10T20:33:59.000Z')
+    }
+  ],
+  devices: [
+    {
+      deviceId: 'dev-694cac15d72d',
+      platform: 'ANDROID',
+      firstSeen: ISODate('2024-11-28T10:05:43.000Z')
+    }
+  ],
+  createdAt: ISODate('2024-11-09T18:31:41.000Z')
+}
+
+======================================================================
+M2. WHO OWNS AN ACCOUNT? Query INSIDE an embedded array (multikey index)
+======================================================================
+Before indexing accounts.accountNumber:
+{
+  plan: 'COLLSCAN',
+  keysExamined: 0,
+  docsExamined: 50020,
+  returned: 1,
+  timeMs: 14
+}
+After indexing (one index entry per array element = MULTIKEY index):
+{
+  plan: 'FETCH <- IXSCAN(ix_accounts_number, multikey)',
+  keysExamined: 1,
+  docsExamined: 1,
+  returned: 1,
+  timeMs: 0
+}
+{
+  _id: 50018,
+  name: {
+    first: 'Bayo',
+    last: 'Lawson'
+  },
+  kyc: {
+    tier: 1
+  },
+  accounts: [
+    {
+      accountNumber: '3900000003',
+      product: 'SAV_NGN',
+      currency: 'NGN',
+      role: 'PRIMARY',
+      status: 'ACTIVE',
+      balance: Decimal128('5000.00'),
+      branch: {
+        code: '002',
+        name: 'Ikeja'
+      },
+      openedAt: ISODate('2026-10-19T07:45:00.000Z')
+    }
+  ],
+  devices: [
+    {
+      deviceId: 'dev-7f3a9c11e2b4',
+      platform: 'ANDROID',
+      firstSeen: ISODate('2026-10-19T07:40:00.000Z')
+    },
+    {
+      deviceId: 'dev-973513a326b8',
+      platform: 'ANDROID',
+      firstSeen: ISODate('2026-10-21T07:40:00.000Z')
+    }
+  ],
+  createdAt: ISODate('2026-10-19T07:40:00.000Z')
+}
+
+======================================================================
+M3. KYC COMPLIANCE over documents of DIFFERENT shapes
+======================================================================
+Tier counts and how many KYC documents customers in each tier hold:
+[
+  {
+    _id: 1,
+    customers: 12562,
+    avgDocuments: 0
+  },
+  {
+    _id: 2,
+    customers: 20043,
+    avgDocuments: 1
+  },
+  {
+    _id: 3,
+    customers: 17415,
+    avgDocuments: 3
+  }
+]
+Tier-3 customers whose passport OR driver's licence has EXPIRED ($elemMatch: both
+conditions must hold for the SAME array element; tier 1/2 documents have no expiry field at all):
+5216
+Customers whose utility bill did NOT match their address (field exists only on UTILITY_BILL items):
+741
+Example of an expired-document customer (kyc only):
+{
+  _id: 68,
+  name: {
+    first: 'Adebayo',
+    last: 'Abubakar'
+  },
+  kyc: {
+    tier: 3,
+    dailyDebitLimit: Decimal128('5000000.00'),
+    verifiedBy: [
+      'BVN',
+      'PHONE',
+      'NIN',
+      'ADDRESS'
+    ],
+    documents: [
+      {
+        type: 'NIN',
+        number: '70000000068',
+        verifiedAt: ISODate('2024-11-05T20:28:03.000Z')
+      },
+      {
+        type: 'UTILITY_BILL',
+        issuer: 'IBEDC',
+        billMonth: '2024-10',
+        addressMatched: true
+      },
+      {
+        type: 'INTL_PASSPORT',
+        number: 'A00000476',
+        expiresOn: ISODate('2025-01-17T00:00:00.000Z')
+      }
+    ]
+  }
+}
+
+======================================================================
+M4. MONTHLY STATEMENT: one document per account per month (bucket pattern)
+======================================================================
+{
+  plan: 'IDHACK',
+  keysExamined: 1,
+  docsExamined: 1,
+  returned: 1,
+  timeMs: 0
+}
+{
+  _id: '3100000100:2026-10',
+  openingBalance: Decimal128('204620.00'),
+  closingBalance: Decimal128('5100.00'),
+  totals: {
+    credits: Decimal128('33680.00'),
+    debits: Decimal128('233200.00'),
+    count: 11
+  },
+  transactionsEmbedded: 11,
+  firstTransaction: {
+    ref: 'BLK0000526861',
+    at: ISODate('2026-10-01T23:33:51.338Z'),
+    type: 'TRANSFER',
+    channel: 'MOBILE',
+    drCr: 'DR',
+    amount: Decimal128('6830.00'),
+    narration: 'Transfer',
+    balanceAfter: Decimal128('197790.00')
+  },
+  lastTransaction: {
+    ref: 'BLK0000863578',
+    at: ISODate('2026-10-29T10:23:21.355Z'),
+    type: 'TRANSFER',
+    channel: 'MOBILE',
+    drCr: 'DR',
+    amount: Decimal128('15020.00'),
+    narration: 'Transfer',
+    balanceAfter: Decimal128('5100.00')
+  }
+}
+Cross-check with Portfolio 2 query Q2 (same account, same month): 11 rows, closing balance 5100.00
+
+======================================================================
+M5. AGGREGATION PIPELINE: October 2026 debits by channel
+======================================================================
+[
+  {
+    _id: 'ATM',
+    debits: 4205,
+    total: Decimal128('106165580.00')
+  },
+  {
+    _id: 'BRANCH',
+    debits: 1255,
+    total: Decimal128('35835750.00')
+  },
+  {
+    _id: 'MOBILE',
+    debits: 23939,
+    total: Decimal128('636496630.00')
+  },
+  {
+    _id: 'POS',
+    debits: 3002,
+    total: Decimal128('76899650.00')
+  },
+  {
+    _id: 'SYSTEM',
+    debits: 1782,
+    total: Decimal128('89100.00')
+  },
+  {
+    _id: 'USSD',
+    debits: 4196,
+    total: Decimal128('114102390.00')
+  },
+  {
+    _id: 'WEB',
+    debits: 3792,
+    total: Decimal128('95954880.00')
+  }
+]
+(run_all.sh runs the same calculation in PostgreSQL; the two must agree)
+
+======================================================================
+M6. AGGREGATION with $lookup: top 5 spenders in October 2026
+======================================================================
+[
+  {
+    spent: Decimal128('5552920.00'),
+    account: '3100000001',
+    customer: 'Chidi Okafor',
+    tier: 3
+  },
+  {
+    spent: Decimal128('1807310.00'),
+    account: '3100000002',
+    customer: 'Chioma Akande',
+    tier: 2
+  },
+  {
+    spent: Decimal128('1379300.00'),
+    account: '3100000003',
+    customer: 'Kelechi Nnamdi',
+    tier: 1
+  },
+  {
+    spent: Decimal128('1120200.00'),
+    account: '3100000004',
+    customer: 'Ifeoma Ajayi',
+    tier: 2
+  },
+  {
+    spent: Decimal128('1091000.00'),
+    account: '3100000006',
+    customer: 'Chidi Abubakar',
+    tier: 2
+  }
+]
+
+======================================================================
+M7. SCHEMA VALIDATION rejects a malformed customer
+======================================================================
+Rejected: Document failed validation
+[
+  'bvn -> ["regular expression did not match"]',
+  'contact -> ["properties"]',
+  'kyc -> ["properties"]',
+  'accounts -> ["array did not match specified length"]'
+]
+
+======================================================================
+M8. SCHEMA EVOLUTION without a migration
+======================================================================
+{
+  withConsents: 1,
+  withoutConsents: 50019
+}
+
+======================================================================
+STORAGE
+======================================================================
+{
+  collection: 'customers',
+  documents: 50020,
+  avgDocumentBytes: 901,
+  dataMB: 43,
+  storageMB_compressed: 10.7,
+  indexes: [
+    '_id_',
+    'ux_contact_phone',
+    'ix_accounts_number'
+  ],
+  indexMB: 2.5
+}
+{
+  collection: 'account_statements',
+  documents: 132386,
+  avgDocumentBytes: 602,
+  dataMB: 76,
+  storageMB_compressed: 17.8,
+  indexes: [
+    '_id_'
+  ],
+  indexMB: 4.3
+}

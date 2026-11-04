@@ -1,0 +1,13 @@
+-- run at 2026-11-04 11:02:58 WAT
+[
+  {
+    collection: 'customers',
+    validationAction: 'error'
+  },
+  {
+    collection: 'account_statements',
+    validationAction: 'error'
+  }
+]
+2026-11-04T10:02:59.567+0000	50020 document(s) imported successfully. 0 document(s) failed to import.
+2026-11-04T10:03:01.880+0000	132386 document(s) imported successfully. 0 document(s) failed to import.

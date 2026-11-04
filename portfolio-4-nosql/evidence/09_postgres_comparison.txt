@@ -1,0 +1,66 @@
+-- run at 2026-11-04 11:03:19 WAT
+SET
+Timing is on.
+=== X1. Cross-check MongoDB M5: October 2026 debits by channel (must equal the MongoDB result) ===
+ channel | debits |    total     
+---------+--------+--------------
+ ATM     |   4205 | 106165580.00
+ BRANCH  |   1255 |  35835750.00
+ MOBILE  |  23939 | 636496630.00
+ POS     |   3002 |  76899650.00
+ SYSTEM  |   1782 |     89100.00
+ USSD    |   4196 | 114102390.00
+ WEB     |   3792 |  95954880.00
+(7 rows)
+
+Time: 42.343 ms
+=== X2. Neo4j G1 in SQL: shared devices. A one-hop question is easy in SQL too ===
+    device_id     | customers |                               names                               
+------------------+-----------+-------------------------------------------------------------------
+ dev-7f3a9c11e2b4 |         5 | Ese Okoro, Danjuma Ali, Tobi Adekunle, Bayo Lawson, Chuka Emenike
+ dev-family-tab01 |         3 | Sani Danjuma, Yetunde Danjuma, Amaka Uche
+(2 rows)
+
+Time: 94.839 ms
+=== X3. Neo4j G2 in SQL: money cycles of 3-6 hops within 24 hours (recursive CTE) ===
+                          cycle                           | hops |                 amounts                  | minutes_to_complete 
+----------------------------------------------------------+------+------------------------------------------+---------------------
+ {3900000001,3900000002,3900000003,3900000004,3900000001} |    4 | {175000.00,170000.00,165000.00,40000.00} |                  69
+(1 row)
+
+Time: 235.990 ms
+=== X3 plan summary: how much work the recursive CTE did ===
+                                                                                                                      QUERY PLAN                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   CTE oct
+     ->  Gather (actual rows=31927 loops=1)
+           Workers Planned: 2
+           Workers Launched: 2
+           ->  Parallel Seq Scan on bank_transaction (actual rows=10642 loops=3)
+                 Filter: ((created_at >= '2026-10-01 00:00:00+01'::timestamp with time zone) AND (created_at < '2026-11-01 00:00:00+01'::timestamp with time zone) AND ((txn_type)::text = 'TRANSFER'::text) AND ((status)::text = 'COMPLETED'::text))
+                 Rows Removed by Filter: 342713
+   CTE walk
+     ->  Recursive Union (actual rows=32468 loops=1)
+           ->  CTE Scan on oct (actual rows=31927 loops=1)
+           ->  Merge Join (actual rows=108 loops=5)
+                 Merge Cond: (o.src = w.current_acct)
+                 Join Filter: ((o.created_at > w.last_at) AND (o.created_at < (w.first_at + '24:00:00'::interval)) AND ((o.dst = w.start_acct) OR (o.dst <> ALL (w.path))))
+                 Rows Removed by Join Filter: 3300
+                 ->  Sort (actual rows=31927 loops=5)
+                       Sort Key: o.src
+                       Sort Method: quicksort  Memory: 2515kB
+                       ->  CTE Scan on oct o (actual rows=31927 loops=5)
+                 ->  Materialize (actual rows=7539 loops=5)
+                       ->  Sort (actual rows=6493 loops=5)
+                             Sort Key: w.current_acct
+                             Sort Method: quicksort  Memory: 25kB
+                             ->  WorkTable Scan on walk w (actual rows=6493 loops=5)
+                                   Filter: ((hops < 6) AND (current_acct <> start_acct))
+                                   Rows Removed by Filter: 0
+   ->  CTE Scan on walk (actual rows=32468 loops=1)
+ Planning Time: 0.113 ms
+ Execution Time: 154.889 ms
+(29 rows)
+
+Time: 155.454 ms

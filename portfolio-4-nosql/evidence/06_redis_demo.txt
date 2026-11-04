@@ -1,0 +1,155 @@
+-- run at 2026-11-04 11:03:02 WAT; Redis server v=7.4.12
+
+======================================================================
+R1. LOGIN SESSIONS: a key that deletes itself after 15 minutes of inactivity
+======================================================================
+redis> SET session:9f2c41d7e8 {"customerId":1015,"deviceId":"dev-694cac15d72d","kycTier":2} EX 900
+        OK
+redis> GET session:9f2c41d7e8
+        "{\"customerId\":1015,\"deviceId\":\"dev-694cac15d72d\",\"kycTier\":2}"
+redis> TTL session:9f2c41d7e8
+        (integer) 900
+  Each API call slides the expiry forward (keep-alive):
+redis> EXPIRE session:9f2c41d7e8 900
+        (integer) 1
+  A hash keeps the session's fields individually addressable:
+redis> HSET sess:9f2c41d7e8 customerId 1015 deviceId dev-694cac15d72d kycTier 2 lastSeen 2026-11-04T09:00:00Z
+        (integer) 4
+redis> HGET sess:9f2c41d7e8 kycTier
+        "2"
+redis> EXPIRE sess:9f2c41d7e8 900
+        (integer) 1
+
+======================================================================
+R2. ONE-TIME PASSWORDS (OTP) for transfer confirmation
+======================================================================
+  SET ... NX only succeeds if no OTP is active, which stops repeated OTP requests flooding the customer:
+redis> SET otp:+2348100001000 482913 EX 120 NX
+        OK
+redis> SET otp:+2348100001000 111111 EX 120 NX
+        (nil)
+  Wrong guesses are counted; the counter expires on its own:
+redis> INCR otp_attempts:+2348100001000
+        (integer) 1
+redis> INCR otp_attempts:+2348100001000
+        (integer) 2
+redis> INCR otp_attempts:+2348100001000
+        (integer) 3
+redis> EXPIRE otp_attempts:+2348100001000 900
+        (integer) 1
+  (the application refuses further guesses once the counter reaches 3)
+  Correct code: verify, then DEL so the code cannot be used twice:
+redis> GET otp:+2348100001000
+        "482913"
+redis> DEL otp:+2348100001000
+        (integer) 1
+  Expiry in action, with an OTP of 2 seconds:
+redis> SET otp:demo 999999 EX 2
+        OK
+redis> GET otp:demo
+        (nil)
+
+======================================================================
+R3. RATE LIMITING: at most 5 transfers per customer per minute
+======================================================================
+  A Lua script makes INCR + EXPIRE ONE atomic step on the server, so two app servers
+  cannot both see count = 5 and let a 6th transfer through:
+   transfer attempt 1  ->  count in this minute = 1  ->  ALLOWED
+   transfer attempt 2  ->  count in this minute = 2  ->  ALLOWED
+   transfer attempt 3  ->  count in this minute = 3  ->  ALLOWED
+   transfer attempt 4  ->  count in this minute = 4  ->  ALLOWED
+   transfer attempt 5  ->  count in this minute = 5  ->  ALLOWED
+   transfer attempt 6  ->  count in this minute = 6  ->  BLOCKED (429 Too Many Requests)
+   transfer attempt 7  ->  count in this minute = 7  ->  BLOCKED (429 Too Many Requests)
+redis> TTL rl:transfer:1015:29896443
+        (integer) 60
+
+======================================================================
+R4. IDEMPOTENCY KEYS (the same idea as Portfolio 3 D6, checked before PostgreSQL is touched)
+======================================================================
+redis> SET idem:APP-REQ-000555 PROCESSING NX EX 86400
+        OK
+  The app times out and re-sends the same request:
+redis> SET idem:APP-REQ-000555 PROCESSING NX EX 86400
+        (nil)
+  (nil) = key already exists, so this is a duplicate and is rejected without hitting the database
+redis> SET idem:APP-REQ-000555 COMPLETED:TRF000000004711 XX KEEPTTL
+        OK
+redis> GET idem:APP-REQ-000555
+        "COMPLETED:TRF000000004711"
+
+======================================================================
+R5. LIVE LEADERBOARD (sorted set) fed from the SAME PostgreSQL data
+======================================================================
+  Every transaction on 31 Oct 2026 adds 1 to the score of each account it touched:
+redis> ZCARD busiest:2026-10-31
+        (integer) 2809
+  Top 5 (kept sorted on every update, so reading it costs O(log n), not a GROUP BY):
+redis> ZREVRANGE busiest:2026-10-31 0 4 WITHSCORES
+         1) "3100000001"
+         2) "11"
+         3) "3100000005"
+         4) "4"
+         5) "3100000070"
+         6) "3"
+         7) "3100000037"
+         8) "3"
+         9) "3100000022"
+        10) "3"
+  Where does one account rank? (0-based: 3 = 4th place)
+redis> ZREVRANK busiest:2026-10-31 3100000037
+        (integer) 3
+redis> ZSCORE busiest:2026-10-31 3100000037
+        "3"
+  The same question asked of PostgreSQL (must agree with the top 5 above):
+         account_number | transactions 
+        ----------------+--------------
+         3100000001     |           11
+         3100000005     |            4
+         3100000070     |            3
+         3100000037     |            3
+         3100000022     |            3
+        (5 rows)
+        
+
+======================================================================
+R6. CACHE-ASIDE: balance enquiries served from memory for 30 seconds
+======================================================================
+redis> GET cache:balance:3100000100
+        (nil)
+  (nil) = cache miss -> read PostgreSQL, then store the answer with a short TTL:
+redis> SET cache:balance:3100000100 5100.00 EX 30
+        OK
+redis> GET cache:balance:3100000100
+        "5100.00"
+  When a transfer posts, the app deletes the key so the next read is fresh:
+redis> DEL cache:balance:3100000100
+        (integer) 1
+
+======================================================================
+R7. THROUGHPUT (redis-benchmark, 50 clients, 100,000 requests each test)
+======================================================================
+   SET: 319488.81 requests per second, p50=0.087 msec
+   GET: 317460.31 requests per second, p50=0.079 msec
+   INCR: 331125.84 requests per second, p50=0.079 msec
+  With pipelining (16 commands per round trip):
+   SET: 3225806.50 requests per second, p50=0.199 msec
+   GET: 3846153.75 requests per second, p50=0.167 msec
+   INCR: 3703703.50 requests per second, p50=0.175 msec
+
+======================================================================
+R8. WHY THE LEDGER STAYS IN POSTGRESQL
+======================================================================
+redis> CONFIG GET appendonly
+        1) "appendonly"
+        2) "no"
+redis> CONFIG GET save
+        1) "save"
+        2) "3600 1 300 100 60 10000"
+        rdb_changes_since_last_save:402952
+        rdb_last_save_time:1793786582
+        aof_enabled:0
+  With the default settings Redis persists only periodic snapshots (RDB), and the
+  append-only file is OFF. A crash can lose the writes since the last snapshot,
+  which is acceptable for sessions, OTPs and counters, and unacceptable for money.
+        used_memory_human:1.67M

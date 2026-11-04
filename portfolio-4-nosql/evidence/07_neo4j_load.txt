@@ -1,0 +1,11 @@
+-- run at 2026-11-04 11:03:09 WAT
+node_label, nodes
+"Account", 60025
+"CashChannel", 2
+"Customer", 50020
+"Device", 65027
+relationship, relationships
+"CASHED_OUT", 7207
+"OWNS", 60025
+"TRANSFERRED", 31927
+"USES", 65033

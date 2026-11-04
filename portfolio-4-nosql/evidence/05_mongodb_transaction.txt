@@ -1,0 +1,45 @@
+-- run at 2026-11-04 11:03:02 WAT
+=== T1. Successful transfer of N5,000 ===
+{
+  '3100000100': {
+    balance: Decimal128('5100.00'),
+    novemberEntries: 0
+  },
+  '3100001000': {
+    balance: Decimal128('107100.00'),
+    novemberEntries: 0
+  },
+  when: 'before T1'
+}
+COMMITTED MDB-TXN-0001: 4 documents changed atomically
+{
+  '3100000100': {
+    balance: Decimal128('10100.00'),
+    novemberEntries: 1
+  },
+  '3100001000': {
+    balance: Decimal128('102100.00'),
+    novemberEntries: 1
+  },
+  when: 'after T1'
+}
+
+=== T2. Transfer of N10,000,000: the writes run, then the rule fails and the transaction aborts ===
+ABORTED MDB-TXN-0002 (Insufficient funds: available 102100, requested 10000000.00): every write of this transaction was discarded
+{
+  '3100000100': {
+    balance: Decimal128('10100.00'),
+    novemberEntries: 1
+  },
+  '3100001000': {
+    balance: Decimal128('102100.00'),
+    novemberEntries: 1
+  },
+  when: "after T2 (identical to 'after T1')"
+}
+
+=== Isolation: an uncommitted write is invisible outside its transaction ===
+{
+  insideTransaction: 'SUSPENDED',
+  outsideTransaction: 'ACTIVE'
+}

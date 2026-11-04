@@ -1,0 +1,71 @@
+{
+  "_id": "3900000001:2026-10",
+  "accountNumber": "3900000001",
+  "month": "2026-10",
+  "currency": "NGN",
+  "openingBalance": {
+    "$numberDecimal": "0.00"
+  },
+  "closingBalance": {
+    "$numberDecimal": "45000.00"
+  },
+  "totals": {
+    "credits": {
+      "$numberDecimal": "220000.00"
+    },
+    "debits": {
+      "$numberDecimal": "175000.00"
+    },
+    "count": 3
+  },
+  "transactions": [
+    {
+      "ref": "OTB2610280092",
+      "at": {
+        "$date": "2026-10-28T08:14:00.000Z"
+      },
+      "type": "TRANSFER",
+      "channel": "MOBILE",
+      "drCr": "CR",
+      "amount": {
+        "$numberDecimal": "180000.00"
+      },
+      "narration": "Investment - 40% weekly",
+      "balanceAfter": {
+        "$numberDecimal": "180000.00"
+      }
+    },
+    {
+      "ref": "OTB2610280094",
+      "at": {
+        "$date": "2026-10-28T08:31:00.000Z"
+      },
+      "type": "TRANSFER",
+      "channel": "MOBILE",
+      "drCr": "DR",
+      "amount": {
+        "$numberDecimal": "175000.00"
+      },
+      "narration": "Payment",
+      "balanceAfter": {
+        "$numberDecimal": "5000.00"
+      }
+    },
+    {
+      "ref": "OTB2610280098",
+      "at": {
+        "$date": "2026-10-28T09:40:00.000Z"
+      },
+      "type": "TRANSFER",
+      "channel": "MOBILE",
+      "drCr": "CR",
+      "amount": {
+        "$numberDecimal": "40000.00"
+      },
+      "narration": "Payment",
+      "balanceAfter": {
+        "$numberDecimal": "45000.00"
+      }
+    }
+  ]
+}

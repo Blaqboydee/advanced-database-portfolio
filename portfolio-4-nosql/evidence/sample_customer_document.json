@@ -1,0 +1,111 @@
+{
+  "_id": 1,
+  "bvn": "22100000001",
+  "name": {
+    "first": "Adaeze",
+    "last": "Okonkwo"
+  },
+  "contact": {
+    "phone": "+2348030000001",
+    "email": "adaeze.okonkwo@example.com"
+  },
+  "dateOfBirth": {
+    "$date": "1988-04-12T00:00:00Z"
+  },
+  "address": {
+    "line": "5 Admiralty Way",
+    "city": "Lekki",
+    "state": "Lagos"
+  },
+  "status": "ACTIVE",
+  "kyc": {
+    "tier": 3,
+    "dailyDebitLimit": {
+      "$numberDecimal": "5000000.00"
+    },
+    "verifiedBy": [
+      "BVN",
+      "PHONE",
+      "NIN",
+      "ADDRESS"
+    ],
+    "documents": [
+      {
+        "type": "NIN",
+        "number": "70000000001",
+        "verifiedAt": {
+          "$date": "2026-08-20T08:30:00Z"
+        }
+      },
+      {
+        "type": "UTILITY_BILL",
+        "issuer": "EKEDC",
+        "billMonth": "2026-07",
+        "addressMatched": true
+      },
+      {
+        "type": "DRIVERS_LICENCE",
+        "number": "LAG000000001",
+        "stateOfIssue": "Lagos",
+        "expiresOn": {
+          "$date": "2025-02-23T00:00:00Z"
+        }
+      }
+    ]
+  },
+  "accounts": [
+    {
+      "accountNumber": "3010000001",
+      "product": "SAV_NGN",
+      "currency": "NGN",
+      "role": "PRIMARY",
+      "status": "ACTIVE",
+      "balance": {
+        "$numberDecimal": "450000.00"
+      },
+      "branch": {
+        "code": "001",
+        "name": "Lagos Island Main"
+      },
+      "openedAt": {
+        "$date": "2026-08-20T09:00:00Z"
+      }
+    },
+    {
+      "accountNumber": "3010000002",
+      "product": "CUR_NGN",
+      "currency": "NGN",
+      "role": "PRIMARY",
+      "status": "ACTIVE",
+      "balance": {
+        "$numberDecimal": "249900.00"
+      },
+      "branch": {
+        "code": "001",
+        "name": "Lagos Island Main"
+      },
+      "openedAt": {
+        "$date": "2026-08-20T09:30:00Z"
+      }
+    }
+  ],
+  "devices": [
+    {
+      "deviceId": "dev-98c6f2c2287f",
+      "platform": "ANDROID",
+      "firstSeen": {
+        "$date": "2026-09-16T10:57:01Z"
+      }
+    },
+    {
+      "deviceId": "dev-ea66c06c1e1c",
+      "platform": "ANDROID",
+      "firstSeen": {
+        "$date": "2026-09-19T03:56:03Z"
+      }
+    }
+  ],
+  "createdAt": {
+    "$date": "2026-08-20T08:30:00Z"
+  }
+}

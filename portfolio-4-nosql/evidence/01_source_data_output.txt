@@ -1,0 +1,59 @@
+-- run at 2026-11-04 11:02:20 WAT
+ TRANSFER   | FAILED    |  15378 |  1.45
+ TRANSFER   | PENDING   |    220 |  0.02
+ TRANSFER   | REVERSED  |      1 |  0.00
+ WITHDRAWAL | COMPLETED | 146035 | 13.78
+ WITHDRAWAL | FAILED    |   4104 |  0.39
+(9 rows)
+
+ pct_of_debits_by_top_10pct_accounts 
+-------------------------------------
+                                32.5
+(1 row)
+
+ quarter |  txns  
+---------+--------
+ 2024 Q4 |  60000
+ 2025 Q1 |  81485
+ 2025 Q2 | 113766
+ 2025 Q3 | 130124
+ 2025 Q4 | 142801
+ 2026 Q1 | 148510
+ 2026 Q2 | 158227
+ 2026 Q3 | 167350
+ 2026 Q4 |  57789
+(9 rows)
+
+SET
+ setseed 
+---------
+ 
+(1 row)
+
+DROP TABLE
+CREATE TABLE
+INSERT 0 65020
+INSERT 0 3
+INSERT 0 5
+INSERT 0 5
+INSERT 0 5
+INSERT 0 10
+INSERT 0 14
+UPDATE 7
+ANALYZE
+ account_number |  balance  
+----------------+-----------
+ 3100000777     | 185500.00
+ 3100004321     | 556410.00
+ 3900000001     |  45000.00
+ 3900000002     |  65000.00
+ 3900000003     |   5000.00
+ 3900000004     |   5000.00
+ 3900000005     |  20000.00
+(7 rows)
+
+ devices | distinct_devices 
+---------+------------------
+   65033 |            65027
+(1 row)
+
